@@ -1,0 +1,12 @@
+GitHub Pages 部署说明
+
+1. 解压本压缩包。
+2. 将解压后的所有文件和文件夹直接上传到 GitHub 仓库根目录。
+   注意：index.html、control-full.html、.github 文件夹必须在仓库根目录，不能再套一层外部文件夹。
+3. 进入仓库 Settings -> Pages。
+4. Source 选择 GitHub Actions。
+5. 回到 Actions，运行或等待 “Deploy static site to GitHub Pages”。
+6. 如果之前有失败的旧部署任务，可以取消旧任务后重新运行最新一次。
+
+本版本已加入官方 GitHub Pages Actions 工作流：.github/workflows/pages.yml
+并保留 .nojekyll，避免静态资源被 Jekyll 处理。

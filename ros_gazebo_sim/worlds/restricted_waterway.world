@@ -1,0 +1,427 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <world name="restricted_waterway">
+
+    <!-- 重力 -->
+    <gravity>0 0 -9.81</gravity>
+
+    <!-- 光照 -->
+    <light name="sun" type="directional">
+      <pose>100 100 200 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 -0.5 -1</direction>
+      <cast_shadows>true</cast_shadows>
+    </light>
+
+    <light name="ambient" type="ambient">
+      <diffuse>0.4 0.4 0.5 1</diffuse>
+    </light>
+
+    <!-- 物理引擎设置 -->
+    <physics name="default_physics" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+      <ode>
+        <solver>
+          <type>quick</type>
+          <iters>50</iters>
+          <sor>1.3</sor>
+        </solver>
+      </ode>
+    </physics>
+
+    <!-- ===== 水面 ===== -->
+    <include>
+      <uri>model://water</uri>
+      <pose>0 0 0 0 0 0</pose>
+    </include>
+
+    <!-- ===== 地面 (航道底部) ===== -->
+    <model name="seafloor">
+      <static>true</static>
+      <link name="floor_link">
+        <collision name="floor_collision">
+          <geometry>
+            <box>
+              <size>200 200 0.1</size>
+            </geometry>
+            <surface>
+              <friction>
+                <ode>
+                  <mu>0.5</mu>
+                  <mu2>0.5</mu2>
+                </ode>
+              </friction>
+            </surface>
+          </collision>
+          <visual name="floor_visual">
+            <geometry>
+              <box>
+                <size>200 200 0.1</size>
+              </geometry>
+            </geometry>
+          </visual>
+        </link>
+      </model>
+      <pose>0 0 -5 0 0 0</pose>
+    </model>
+
+    <!-- ===== 岸壁 - 左侧 ===== -->
+    <model name="left_shore">
+      <static>true</static>
+      <link name="shore_link">
+        <collision name="shore_collision">
+          <geometry>
+            <box>
+              <size>100 2 8</size>
+            </geometry>
+            <surface>
+              <friction>
+                <ode>
+                  <mu>0.8</mu>
+                  <mu2>0.8</mu2>
+                </ode>
+              </friction>
+            </surface>
+          </collision>
+          <visual name="shore_visual">
+            <geometry>
+              <box>
+                <size>100 2 8</size>
+              </geometry>
+            </geometry>
+            <material>
+              <ambient>0.5 0.5 0.5 1</ambient>
+              <diffuse>0.6 0.6 0.6 1</diffuse>
+            </material>
+          </visual>
+        </link>
+      </model>
+      <pose>0 -15 2 0 0 0</pose>
+    </model>
+
+    <!-- ===== 岸壁 - 右侧 ===== -->
+    <model name="right_shore">
+      <static>true</static>
+      <link name="shore_link">
+        <collision name="shore_collision">
+          <geometry>
+            <box>
+              <size>100 2 8</size>
+            </geometry>
+            <surface>
+              <friction>
+                <ode>
+                  <mu>0.8</mu>
+                  <mu2>0.8</mu2>
+                </ode>
+              </friction>
+            </surface>
+          </collision>
+          <visual name="shore_visual">
+            <geometry>
+              <box>
+                <size>100 2 8</size>
+              </geometry>
+            </geometry>
+            <material>
+              <ambient>0.5 0.5 0.5 1</ambient>
+              <diffuse>0.6 0.6 0.6 1</diffuse>
+            </material>
+          </visual>
+        </link>
+      </model>
+      <pose>0 15 2 0 0 0</pose>
+    </model>
+
+    <!-- ===== 入口段宽航道 (x: -40 to -20, 宽: 20m) ===== -->
+    <!-- 使用岸壁收缩形成渐变宽度 -->
+
+    <!-- ===== 中部收缩航道 (x: -10 to 10, 宽: 8m) ===== -->
+    <model name="narrow_left">
+      <static>true</static>
+      <link name="wall_link">
+        <collision name="wall_collision">
+          <geometry>
+            <box>
+              <size>20 1 6</size>
+            </geometry>
+            <surface>
+              <friction>
+                <ode>
+                  <mu>0.8</mu>
+                  <mu2>0.8</mu2>
+                </ode>
+              </friction>
+            </surface>
+          </collision>
+          <visual name="wall_visual">
+            <geometry>
+              <box>
+                <size>20 1 6</size>
+              </geometry>
+            </geometry>
+            <material>
+              <ambient>0.55 0.45 0.35 1</ambient>
+              <diffuse>0.65 0.55 0.45 1</diffuse>
+            </material>
+          </visual>
+        </link>
+      </model>
+      <pose>0 -6 1.5 0 0 0</pose>
+    </model>
+
+    <model name="narrow_right">
+      <static>true</static>
+      <link name="wall_link">
+        <collision name="wall_collision">
+          <geometry>
+            <box>
+              <size>20 1 6</size>
+            </geometry>
+            <surface>
+              <friction>
+                <ode>
+                  <mu>0.8</mu>
+                  <mu2>0.8</mu2>
+                </ode>
+              </friction>
+            </surface>
+          </collision>
+          <visual name="wall_visual">
+            <geometry>
+              <box>
+                <size>20 1 6</size>
+              </geometry>
+            </geometry>
+            <material>
+              <ambient>0.55 0.45 0.35 1</ambient>
+              <diffuse>0.65 0.55 0.45 1</diffuse>
+            </material>
+          </visual>
+        </link>
+      </model>
+      <pose>0 6 1.5 0 0 0</pose>
+    </model>
+
+    <!-- ===== 出口段放宽航道 (x: 20 to 40, 宽: 20m) ===== -->
+
+    <!-- ===== 码头设施 ===== -->
+    <model name="dock">
+      <static>true</static>
+      <link name="dock_link">
+        <collision name="dock_collision">
+          <geometry>
+            <box>
+              <size>6 4 1.5</size>
+            </geometry>
+            <surface>
+              <friction>
+                <ode>
+                  <mu>0.9</mu>
+                  <mu2>0.9</mu2>
+                </ode>
+              </friction>
+            </surface>
+          </collision>
+          <visual name="dock_visual">
+            <geometry>
+              <box>
+                <size>6 4 1.5</size>
+              </geometry>
+            </geometry>
+            <material>
+              <ambient>0.4 0.35 0.3 1</ambient>
+              <diffuse>0.5 0.45 0.4 1</diffuse>
+            </material>
+          </visual>
+        </link>
+      </model>
+      <pose>-30 -10 0.75 0 0 0</pose>
+    </model>
+
+    <!-- ===== 圆柱形静态障碍物 ===== -->
+    <model name="obstacle_1">
+      <static>true</static>
+      <link name="obs_link">
+        <collision name="obs_collision">
+          <geometry>
+            <cylinder>
+              <radius>1.5</radius>
+              <length>3</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>0.8</mu>
+                <mu2>0.8</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+        <visual name="obs_visual">
+          <geometry>
+            <cylinder>
+              <radius>1.5</radius>
+              <length>3</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.8 0.3 0.2 1</ambient>
+            <diffuse>0.9 0.4 0.3 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <pose>-5 2 1.5 0 0 0</pose>
+
+    <model name="obstacle_2">
+      <static>true</static>
+      <link name="obs_link">
+        <collision name="obs_collision">
+          <geometry>
+            <cylinder>
+              <radius>1.0</radius>
+              <length>3</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>0.8</mu>
+                <mu2>0.8</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+        <visual name="obs_visual">
+          <geometry>
+            <cylinder>
+              <radius>1.0</radius>
+              <length>3</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.8 0.3 0.2 1</ambient>
+            <diffuse>0.9 0.4 0.3 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <pose>5 -2 1.5 0 0 0</pose>
+
+    <model name="obstacle_3">
+      <static>true</static>
+      <link name="obs_link">
+        <collision name="obs_collision">
+          <geometry>
+            <cylinder>
+              <radius>1.2</radius>
+              <length>3</length>
+            </cylinder>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>0.8</mu>
+                <mu2>0.8</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+        <visual name="obs_visual">
+          <geometry>
+            <cylinder>
+              <radius>1.2</radius>
+              <length>3</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.8 0.3 0.2 1</ambient>
+            <diffuse>0.9 0.4 0.3 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <pose>15 0 1.5 0 0 0</pose>
+
+    <!-- ===== 动态目标船 (横穿主航道) ===== -->
+    <model name="target_ship">
+      <pose>25 -8 0 0 0 0</pose>
+      <link name="target_link">
+        <inertial>
+          <mass>300</mass>
+          <inertia>
+            <ixx>200</ixx>
+            <iyy>800</iyy>
+            <izz>800</izz>
+          </inertia>
+        </inertial>
+        <collision name="target_collision">
+          <geometry>
+            <box>
+              <size>5 1.5 2</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="target_visual">
+          <geometry>
+            <box>
+              <size>5 1.5 2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.2 0.5 0.2 1</ambient>
+            <diffuse>0.3 0.6 0.3 1</diffuse>
+          </material>
+        </visual>
+      </link>
+      <!-- 目标船运动: 按y轴方向横穿航道 -->
+      <plugin name="target_ship_plugin" filename="libModelPushPlugin.so">
+        <velocity>0 1.5 0 0 0 0</velocity>
+        <duration>5</duration>
+        <delay>3</delay>
+        <publish_pose>true</publish_pose>
+      </plugin>
+    </model>
+
+    <!-- ===== 雷达塔 ===== -->
+    <model name="radar_tower">
+      <static>true</static>
+      <link name="tower_link">
+        <collision name="tower_collision">
+          <geometry>
+            <cylinder>
+              <radius>0.5</radius>
+              <length>10</length>
+            </cylinder>
+          </geometry>
+        </collision>
+        <visual name="tower_visual">
+          <geometry>
+            <cylinder>
+              <radius>0.5</radius>
+              <length>10</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.8 0.8 0.8 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+    <pose>-35 0 5 0 0 0</pose>
+
+    <!-- ===== 场景光照 ===== -->
+    <scene>
+      <ambient>0.4 0.4 0.5 1</ambient>
+      <background>0.1 0.15 0.2 1</background>
+      <shadows>true</shadows>
+    </scene>
+
+  </world>
+</sdf>

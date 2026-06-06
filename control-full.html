@@ -1,0 +1,3858 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能船舶3D控制面板</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.0.1/dist/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #001122; color: #e0f7fa; display: flex; }
+        #canvas-area { flex: 1; position: relative; background: radial-gradient(ellipse at center, #0a2a3a 0%, #001122 100%); min-width: 0; }
+        #canvas-area canvas { display: block; }
+        #top-bar {
+            position: absolute; top: 0; left: 0; right: 0; height: 40px;
+            background: rgba(5,15,30,0.85); border-bottom: 1px solid rgba(64,224,208,0.2);
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 15px; z-index: 100; backdrop-filter: blur(10px);
+        }
+        #top-bar .title { font-size: 0.9rem; font-weight: 600; color: #40e0d0; }
+        #top-bar .stats { display: flex; align-items: center; gap: 18px; font-size: 0.75rem; color: #aaa; }
+        #top-bar .stat-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+        #top-bar .stat-dot.connected { background: #40e0d0; box-shadow: 0 0 6px #40e0d0; }
+        #top-bar .stat-dot.disconnected { background: #e63946; box-shadow: 0 0 6px #e63946; }
+        .axes-overlay {
+            position: absolute; top: 50px; left: 10px; z-index: 90;
+            pointer-events: none; user-select: none;
+            background: rgba(0,0,0,0.35); border-radius: 4px;
+            padding: 2px 5px; line-height: 1.3;
+        }
+        .axes-overlay .axes-label {
+            font-size: 0.6rem; color: rgba(200,220,240,0.85);
+            text-shadow: 0 0 3px rgba(0,0,0,0.9);
+        }
+        .axes-overlay .axes-label span.scene-x { color: #ff4444; }
+        .axes-overlay .axes-label span.scene-y { color: #44ff44; }
+        .axes-overlay .axes-label span.scene-z { color: #4444ff; }
+        .axes-overlay .axes-label span.model-x { color: #ff8800; }
+        .axes-overlay .axes-label span.model-y { color: #00ddff; }
+        .axes-overlay .axes-label span.model-z { color: #ff44ff; }
+        .axes-overlay .axes-label.model-label { color: rgba(180,200,220,0.8); }
+        #bottom-bar {
+            position: absolute; bottom: 0; left: 0; right: 0; height: 32px;
+            background: rgba(5,15,30,0.85); border-top: 1px solid rgba(64,224,208,0.2);
+            display: flex; align-items: center; padding: 0 15px; z-index: 100;
+            font-size: 0.7rem; color: #888; gap: 24px;
+        }
+        #sidebar {
+            width: 340px; height: 100%; background: rgba(5,15,30,0.98);
+            border-left: 1px solid rgba(64,224,208,0.2); display: flex;
+            flex-direction: column; overflow: hidden; box-shadow: -5px 0 30px rgba(0,0,0,0.5);
+        }
+        #sidebar-header {
+            padding: 14px 16px; border-bottom: 1px solid rgba(64,224,208,0.2);
+            font-weight: 600; font-size: 0.95rem; color: #40e0d0;
+            display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
+        }
+        #sidebar-header button {
+            background: none; border: 1px solid rgba(64,224,208,0.3); color: #40e0d0;
+            padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; transition: all 0.2s;
+        }
+        #sidebar-header button:hover { background: rgba(64,224,208,0.15); }
+        #sidebar-scroll {
+            flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px;
+        }
+        #sidebar-scroll::-webkit-scrollbar { width: 4px; }
+        #sidebar-scroll::-webkit-scrollbar-thumb { background: rgba(64,224,208,0.3); border-radius: 2px; }
+        .panel { background: rgba(10,25,47,0.8); border: 1px solid rgba(64,224,208,0.15); border-radius: 10px; padding: 12px; }
+        .panel-header {
+            display: flex; align-items: center; gap: 8px; padding-bottom: 8px;
+            border-bottom: 1px solid rgba(64,224,208,0.1); margin-bottom: 10px;
+            font-size: 0.8rem; font-weight: 600; color: #40e0d0;
+        }
+        .panel-icon {
+            width: 22px; height: 22px; background: rgba(64,224,208,0.15);
+            border-radius: 4px; display: flex; align-items: center; justify-content: center;
+            font-size: 0.7rem; font-weight: 700; font-family: 'Courier New', monospace;
+        }
+        .panel-content { font-size: 0.75rem; }
+        .upload-area {
+            border: 1px dashed rgba(64,224,208,0.4); border-radius: 6px;
+            padding: 8px; text-align: center; cursor: pointer; font-size: 0.7rem;
+            color: rgba(255,255,255,0.6); transition: all 0.2s; margin-bottom: 6px;
+        }
+        .upload-area:hover { border-color: #40e0d0; color: #40e0d0; }
+        .model-list-item {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 4px 8px; border-radius: 4px; background: rgba(0,0,0,0.3);
+            margin-bottom: 3px; font-size: 0.68rem; cursor: pointer; transition: all 0.15s;
+        }
+        .model-list-item:hover { background: rgba(64,224,208,0.1); }
+        .model-list-item.selected { background: rgba(64,224,208,0.2); border: 1px solid rgba(64,224,208,0.3); }
+        .model-list-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #ccc; }
+        .model-list-del {
+            color: #e63946; cursor: pointer; font-size: 0.75rem; padding: 2px 6px;
+            border-radius: 3px; background: rgba(230,57,70,0.15); border: none; transition: all 0.15s;
+        }
+        .model-list-del:hover { background: rgba(230,57,70,0.4); }
+        .sensor-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+        .sensor-cell { text-align: center; padding: 6px 4px; background: rgba(0,0,0,0.3); border-radius: 6px; }
+        .sensor-cell .label { font-size: 0.55rem; color: #888; font-family: 'Courier New', monospace; }
+        .sensor-cell .value { font-size: 0.72rem; color: #40e0d0; font-weight: 600; }
+        .transform-row { display: flex; gap: 4px; margin-bottom: 4px; }
+        .transform-row .t-label { width: 14px; font-size: 0.6rem; color: #888; font-family: 'Courier New', monospace; display: flex; align-items: center; }
+        .transform-input {
+            flex: 1; padding: 4px 6px; background: rgba(0,0,0,0.5);
+            border: 1px solid rgba(64,224,208,0.3); border-radius: 4px; color: #40e0d0;
+            font-size: 0.7rem; font-family: 'Consolas', monospace; width: 100%;
+        }
+        .transform-input:focus { outline: none; border-color: #40e0d0; }
+        .transform-subtitle { font-size: 0.6rem; color: #888; margin-bottom: 3px; }
+        .transform-btns { display: flex; gap: 6px; margin-top: 8px; }
+        .transform-btns button { flex: 1; padding: 5px 0; border: none; border-radius: 4px; cursor: pointer; font-size: 0.7rem; transition: all 0.2s; }
+        .btn-apply { background: #0077b6; color: white; }
+        .btn-apply:hover { background: #00b4d8; }
+        .btn-reset { background: rgba(255,255,255,0.1); color: #ccc; }
+        .btn-reset:hover { background: rgba(255,255,255,0.2); }
+        .param-group { margin-bottom: 8px; }
+        .param-label { font-size: 0.6rem; color: #888; display: flex; justify-content: space-between; }
+        .param-row { display: flex; align-items: center; gap: 6px; }
+        .param-row select, .param-row input { font-size: 0.68rem; }
+        .param-row select {
+            flex: 1; padding: 4px 6px; background: rgba(0,0,0,0.5);
+            border: 1px solid rgba(64,224,208,0.3); border-radius: 4px; color: #40e0d0;
+        }
+        .range-row { display: flex; align-items: center; gap: 4px; }
+        .range-row input[type=range] { flex: 1; height: 3px; border-radius: 2px; background: #333; -webkit-appearance: none; cursor: pointer; }
+        .range-row input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 11px; border-radius: 50%; background: #40e0d0; cursor: pointer; }
+        .range-row input[type=number] {
+            width: 55px; padding: 3px 4px; text-align: center; background: rgba(0,0,0,0.5);
+            border: 1px solid rgba(64,224,208,0.3); border-radius: 4px; color: #40e0d0;
+            font-size: 0.65rem; font-family: 'Consolas', monospace;
+        }
+        .mini-btn {
+            padding: 3px 8px; font-size: 0.6rem; border: 1px solid rgba(64,224,208,0.3);
+            border-radius: 4px; background: rgba(64,224,208,0.1); color: #ccc; cursor: pointer; transition: all 0.15s;
+        }
+        .mini-btn:hover { background: rgba(64,224,208,0.25); }
+        .mini-btn.primary { background: #0077b6; border-color: #0077b6; color: #fff; }
+        .mini-btn.primary:hover { background: #00b4d8; }
+        .mini-btn.danger { border-color: #e63946; color: #e63946; background: rgba(230,57,70,0.1); }
+        .hw-dot { width: 8px; height: 8px; border-radius: 50%; background: #e63946; display: inline-block; animation: hwPulse 1.5s infinite; }
+        .hw-dot.on { background: #40e0d0; }
+        @keyframes hwPulse { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
+        .hw-data-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 4px; margin-top: 6px; }
+        .hw-cell { text-align: center; padding: 4px; background: rgba(0,0,0,0.3); border-radius: 4px; }
+        .hw-cell .hw-val { font-size: 0.7rem; color: #40e0d0; font-weight: 600; }
+        .hw-cell .hw-lbl { font-size: 0.5rem; color: #666; }
+        #toast {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            background: rgba(64,224,208,0.9); color: #001122; padding: 10px 24px;
+            border-radius: 20px; font-size: 0.8rem; font-weight: 500; z-index: 9999;
+            opacity: 0; pointer-events: none; transition: opacity 0.3s;
+        }
+        #toast.show { opacity: 1; }
+        #toast.error { background: rgba(230,57,70,0.9); color: white; }
+        .mode-btn {
+            padding: 4px 8px; font-size: 0.6rem; border: 1px solid rgba(64,224,208,0.3);
+            border-radius: 4px; background: rgba(64,224,208,0.1); color: #ccc; cursor: pointer; transition: all 0.15s;
+        }
+        .mode-btn:hover { background: rgba(64,224,208,0.25); }
+        .mode-btn.active { background: #0077b6; border-color: #0077b6; color: #fff; }
+        .path-stats { font-size: 0.6rem; color: #888; margin-top: 4px; }
+        .path-stats span { color: #40e0d0; }
+        .github-link {
+            display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px;
+            font-size: 0.65rem; border: 1px solid rgba(64,224,208,0.3); border-radius: 4px;
+            color: #40e0d0; text-decoration: none; transition: all 0.2s;
+        }
+        .github-link:hover { background: rgba(64,224,208,0.15); }
+        .gesture-indicator {
+            display: flex; align-items: center; gap: 6px; padding: 4px 8px;
+            border-radius: 4px; background: rgba(0,0,0,0.3); font-size: 0.6rem;
+        }
+        .gesture-dot { width: 6px; height: 6px; border-radius: 50%; }
+        .gesture-dot.on { background: #40e0d0; box-shadow: 0 0 6px #40e0d0; }
+        .gesture-dot.off { background: #e63946; }
+        .gesture-video-preview {
+            position: absolute; bottom: 40px; right: 10px; width: 200px; height: 150px;
+            border: 2px solid rgba(64,224,208,0.5); border-radius: 8px; overflow: hidden;
+            z-index: 200; background: #000; display: none; box-shadow: 0 0 15px rgba(64,224,208,0.3);
+        }
+        .gesture-video-preview video {
+            width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1);
+        }
+        .gesture-video-preview .gesture-label {
+            position: absolute; top: 4px; left: 4px; font-size: 0.5rem; color: #40e0d0;
+            background: rgba(0,0,0,0.6); padding: 2px 6px; border-radius: 3px;
+        }
+        .waypoint-row {
+            display: flex; align-items: center; gap: 4px; padding: 3px 6px;
+            background: rgba(0,0,0,0.3); border-radius: 4px; margin-bottom: 3px; font-size: 0.6rem;
+        }
+        .waypoint-row span { flex: 1; color: #40e0d0; }
+        .waypoint-row button { padding: 1px 6px; font-size: 0.5rem; }
+        .observe-btn {
+            padding: 6px 12px; font-size: 0.7rem; border: 1px solid rgba(64,224,208,0.3);
+            border-radius: 6px; background: rgba(64,224,208,0.1); color: #40e0d0;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .observe-btn:hover { background: rgba(64,224,208,0.25); }
+        .observe-btn.active { background: #0077b6; border-color: #0077b6; color: #fff; }
+        .time-slider-row {
+            display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
+        }
+        .time-slider-row input[type=range] {
+            flex: 1; height: 4px; border-radius: 2px; background: linear-gradient(90deg, #1a1a2e, #ff8c00, #87ceeb, #ff8c00, #1a1a2e);
+            -webkit-appearance: none; cursor: pointer;
+        }
+        .time-slider-row input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #ffd700; cursor: pointer; }
+        .time-label { font-size: 0.6rem; color: #888; min-width: 45px; text-align: center; }
+        .view-btn { flex: 1; padding: 6px 8px; border: 1px solid rgba(64,224,208,0.3); border-radius: 6px; background: rgba(64,224,208,0.1); color: #40e0d0; cursor: pointer; font-size: 0.65rem; transition: all 0.2s; text-align: center; }
+        .view-btn:hover { background: rgba(64,224,208,0.25); }
+        .view-btn.active { background: #0077b6; border-color: #0077b6; color: #fff; }
+        .weather-info { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 0.65rem; color: #aaa; }
+        .weather-icon { font-size: 1.2rem; }
+        .drive-select-row { display: flex; gap: 4px; margin-bottom: 6px; }
+        .drive-select-row select { flex: 1; padding: 4px 6px; background: rgba(0,0,0,0.5); border: 1px solid rgba(64,224,208,0.3); border-radius: 4px; color: #40e0d0; font-size: 0.68rem; }
+        .density-row { display: flex; align-items: center; gap: 6px; }
+        .density-row input[type=range] { flex: 1; height: 4px; border-radius: 2px; background: #333; -webkit-appearance: none; cursor: pointer; }
+        .density-row input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 11px; height: 11px; border-radius: 50%; background: #40e0d0; }
+        .density-row .val { font-size: 0.68rem; color: #40e0d0; min-width: 40px; text-align: right; }
+        .control-mode-row { display: flex; gap: 4px; margin-bottom: 6px; }
+        .control-mode-btn {
+            flex: 1; padding: 6px 4px; font-size: 0.6rem; border: 1px solid rgba(64,224,208,0.3);
+            border-radius: 6px; background: rgba(64,224,208,0.1); color: #ccc; cursor: pointer; transition: all 0.2s; text-align: center;
+        }
+        .control-mode-btn:hover { background: rgba(64,224,208,0.25); }
+        .control-mode-btn.active { background: #0077b6; border-color: #0077b6; color: #fff; }
+    
+
+        /* Apple-like functional UI refresh */
+        :root {
+            --apple-bg: rgba(246, 248, 251, 0.72);
+            --apple-card: rgba(255, 255, 255, 0.16);
+            --apple-border: rgba(255, 255, 255, 0.28);
+            --apple-blue: #0a84ff;
+            --apple-teal: #64d2ff;
+            --apple-text: #f5f7fb;
+            --apple-sub: rgba(245, 247, 251, 0.68);
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", sans-serif; background: #06111f; color: var(--apple-text); }
+        #canvas-area { background: radial-gradient(circle at 50% 15%, rgba(74, 144, 226, 0.22), rgba(3, 11, 24, 1) 58%, #020711); }
+        #top-bar, #bottom-bar, #sidebar { backdrop-filter: blur(28px) saturate(180%); -webkit-backdrop-filter: blur(28px) saturate(180%); background: rgba(12, 18, 30, 0.58); border-color: rgba(255,255,255,0.14); }
+        #sidebar { width: 360px; box-shadow: -18px 0 52px rgba(0,0,0,0.36); }
+        #sidebar-header { color: #fff; letter-spacing: .02em; }
+        #sidebar-header button, button, .mini-btn, .mode-btn, .view-btn, .observe-btn, .control-mode-btn { border-radius: 999px !important; border: 1px solid rgba(255,255,255,0.18) !important; background: rgba(255,255,255,0.11) !important; color: #f5f7fb !important; box-shadow: inset 0 1px 0 rgba(255,255,255,0.15); }
+        #sidebar-header button:hover, button:hover, .mini-btn:hover, .mode-btn:hover, .view-btn:hover, .observe-btn:hover, .control-mode-btn:hover { background: rgba(255,255,255,0.18) !important; transform: translateY(-1px); }
+        .panel { border-radius: 18px; background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.16); box-shadow: 0 16px 36px rgba(0,0,0,0.20); }
+        .panel-header { color: #fff; border-bottom-color: rgba(255,255,255,0.10); }
+        .panel-icon { border-radius: 9px; background: linear-gradient(145deg, rgba(10,132,255,0.44), rgba(100,210,255,0.18)); color: #fff; }
+        .sensor-cell, .model-list-item { background: rgba(255,255,255,0.10); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; }
+        .model-list-item.selected { background: rgba(10,132,255,0.24); border-color: rgba(100,210,255,0.5); }
+        .transform-input, .param-row select, .param-row input, .drive-select-row select, #chatInput, #wsUrl { border-radius: 12px !important; background: rgba(255,255,255,0.12) !important; border: 1px solid rgba(255,255,255,0.16) !important; color: #fff !important; }
+        input[type=range] { accent-color: var(--apple-blue); }
+        .btn-apply, .primary, .mode-btn.active, .control-mode-btn.active, .view-btn.active { background: linear-gradient(135deg, #0a84ff, #64d2ff) !important; color: white !important; }
+        .gesture-video-preview { width: 260px; height: 196px; border-radius: 22px; overflow: hidden; background: rgba(0,0,0,0.52); border: 1px solid rgba(255,255,255,0.2); box-shadow: 0 18px 48px rgba(0,0,0,0.4); }
+        .gesture-video-preview video, .gesture-video-preview canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        .gesture-video-preview canvas { pointer-events: none; z-index: 2; }
+        .gesture-video-preview .gesture-label { z-index: 3; background: rgba(0,0,0,0.45); backdrop-filter: blur(10px); }
+        .hydro-readout { margin-top: 8px; padding: 8px 10px; border-radius: 12px; background: rgba(10,132,255,0.14); color: #dff4ff; font-size: 0.66rem; line-height: 1.45; border: 1px solid rgba(100,210,255,0.22); }
+
+    </style>
+</head>
+<body>
+<div id="canvas-area">
+    <div id="top-bar">
+        <span class="title">智能船舶3D控制面板</span>
+        <div class="stats">
+            <a href="https://github.com" target="_blank" class="github-link" title="GitHub项目">GH</a>
+            <span><span class="stat-dot disconnected" id="connDot"></span><span id="connStatus">未连接</span></span>
+            <span>FPS: <span id="fpsVal">0</span></span>
+            <span>模型: <span id="mdlCount">0</span></span>
+            <span id="timeDisplay"></span>
+        </div>
+    </div>
+    <div class="axes-overlay" id="axesOverlay">
+        <div class="axes-label">场景 <span class="scene-x">X</span> <span class="scene-y">Y</span> <span class="scene-z">Z</span></div>
+        <div class="axes-label model-label" id="axesModelLabel">模型 <span class="model-x">X</span> <span class="model-y">Y</span> <span class="model-z">Z</span></div>
+    </div>
+    <div id="bottom-bar">
+        <span id="modelInfoDisplay">未选中模型</span>
+        <span id="perfDisplay"></span>
+    </div>
+    <div class="gesture-video-preview" id="gestureVideoPreview">
+        <video id="gestureVideoEl" autoplay playsinline muted></video>
+        <canvas id="gestureCanvas"></canvas>
+        <span class="gesture-label">手势摄像头 · 指头识别</span>
+    </div>
+</div>
+<div id="sidebar">
+    <div id="sidebar-header">控制面板<button onclick="resetScene()">重置场景</button></div>
+    <div id="sidebar-scroll">
+        <!-- 模型管理 -->
+        <div class="panel">
+            <div class="panel-header"><span class="panel-icon">M</span>模型管理</div>
+            <div class="panel-content">
+                <div class="upload-area" id="uploadArea">+ 点击或拖放上传STL模型</div>
+                <input type="file" id="fileInput" accept=".stl" style="display:none;">
+                <div id="modelList"></div>
+            </div>
+        </div>
+        <!-- 传感器 -->
+        <div class="panel">
+            <div class="panel-header"><span class="panel-icon">S</span>传感器数据</div>
+            <div class="panel-content">
+                <div class="sensor-grid">
+                    <div class="sensor-cell"><div class="label">GPS</div><div class="value" id="gpsData">--</div></div>
+                    <div class="sensor-cell"><div class="label">SPD</div><div class="value" id="speedData">0</div></div>
+                    <div class="sensor-cell"><div class="label">BAT</div><div class="value" id="batteryData">--%</div></div>
+                    <div class="sensor-cell"><div class="label">TMP</div><div class="value" id="tempData">--°</div></div>
+                    <div class="sensor-cell"><div class="label">HUM</div><div class="value" id="humidityData">--%</div></div>
+                    <div class="sensor-cell"><div class="label">DPT</div><div class="value" id="depthData">0m</div></div>
+                </div>
+            </div>
+        </div>
+        <!-- 模型变换 -->
+        <div class="panel">
+            <div class="panel-header"><span class="panel-icon">T</span>模型变换</div>
+            <div class="panel-content">
+                <div class="transform-subtitle">位置</div>
+                <div class="transform-row">
+                    <span class="t-label">X</span><input type="number" class="transform-input" id="posX" step="0.1" onchange="applyPosition()">
+                    <span class="t-label">Y</span><input type="number" class="transform-input" id="posY" step="0.1" onchange="applyPosition()">
+                    <span class="t-label">Z</span><input type="number" class="transform-input" id="posZ" step="0.1" onchange="applyPosition()">
+                </div>
+                <div class="transform-subtitle">旋转</div>
+                <div class="transform-row">
+                    <span class="t-label">X</span><input type="number" class="transform-input" id="rotX" step="1" onchange="applyRotation()">
+                    <span class="t-label">Y</span><input type="number" class="transform-input" id="rotY" step="1" onchange="applyRotation()">
+                    <span class="t-label">Z</span><input type="number" class="transform-input" id="rotZ" step="1" onchange="applyRotation()">
+                </div>
+                <div class="transform-subtitle">模型体积</div>
+                <div class="transform-row" style="align-items:center;">
+                    <span class="t-label">V</span>
+                    <input type="number" class="transform-input" id="volumeInput" value="1000" step="1" min="0.000001" max="1000000000" onchange="applyVolumeFromInput(this.value)" style="text-align:center;flex:1;">
+                    <span style="font-size:0.62rem;color:#888;min-width:24px;">m³</span>
+                </div>
+                <div class="transform-btns">
+                    <button class="btn-reset" onclick="resetTransform()">重置</button>
+                    <button class="btn-apply" onclick="applyAllTransform()">应用全部</button>
+                </div>
+            </div>
+        </div>
+        <!-- 模型密度 -->
+        <div class="panel">
+            <div class="panel-header"><span class="panel-icon">D</span>模型密度</div>
+            <div class="panel-content">
+                <div class="param-group">
+                    <div class="param-label">密度 (kg/m³) <span id="densityModelVal">300</span></div>
+                    <div class="density-row">
+                        <input type="number" class="transform-input" id="modelDensityInput" value="300" step="1" min="1" max="30000" onchange="updateModelDensity(this.value)" style="width:100%;text-align:center;">
+                    </div>
+                </div>
+                <div class="param-label" style="margin-top:4px">直接输入具体密度：水 1000 | 默认 300 | 木材 500 | 塑料 950；范围 1-30000</div>
+                <div class="hydro-readout" id="hydroReadout">浮态：请选择模型</div>
+            </div>
+        </div>
+        <!-- 物理引擎 -->
+        <div class="panel">
+            <div class="panel-header"><span class="panel-icon">P</span>物理引擎</div>
+            <div class="panel-content">
+                <div class="param-group">
+                    <div class="param-label">重力 (m/s²) <span id="gravityVal">-9.81</span></div>
+                    <div class="range-row">
+                        <input type="range" min="-20" max="0" step="0.1" value="-9.81" oninput="updateGravity(this.value)">
+                    </div>
+                </div>
+                <div class="param-group">
+                    <div class="param-label">水体密度 (kg/m³) <span id="densityVal">1025</span></div>
+                    <div class="range-row">
+                        <input type="range" min="500" max="2000" step="25" value="1025" oninput="updateDensity(this.value)">
+                    </div>
+                </div>
+                <div class="param-group">
+                    <div class="param-label">阻力系数 <span id="dragVal">0.9</span></div>
+                    <div class="range-row">
+                        <input type="range" min="0.1" max="3" step="0.1" value="0.9" oninput="updateDrag(this.value)">
+                    </div>
+                </div>
+                <div style="display:flex;gap:4px;margin-top:6px">
+                    <button class="mini-btn" id="btnPhysics" onclick="togglePhysics()">暂停物理</button>
+                    <button class="mini-btn" onclick="applyImpulse()">施加冲量</button>
+                </div>
+            </div>
+        </div>
+        <!-- 视角与时间环境 -->
+        <div class="panel">
+            <div class="panel-header"><span class="panel-icon">E</span>视角与时间环境</div>
+            <div class="panel-content">
+                <div style="display:flex;gap:4px;margin-bottom:6px">
+                    <button class="view-btn active" id="viewAbove" onclick="setViewMode('above')">水上视角</button>
+                    <button class="view-btn" id="viewBelow" onclick="setViewMode('below')">水下视角</button>
+                </div>
+                <div class="param-label">时间轴 <span id="timeLabel">12:00</span></div>
+                <div class="time-slider-row">
+                    <span class="time-label">00:00</span>
+                    <input type="range" id="timeSlider" min="0" max="1440" value="720" step="1" oninput="updateSimTime(this.value)">
+                    <span class="time-label">24:00</span>
+                </div>
+                <div class="param-group" style="margin-top:6px">
+                    <div class="param-label">时间流逝速度 <span id="timeSpeedVal">2x</span></div>
+                    <div class="range-row">
+                        <input type="range" id="timeSpeedSlider" min="0" max="20" step="0.5" value="2" oninput="updateTimeSpeed(this.value)">
+                    </div>
+                </div>
+                <div class="param-label">当前时间: <span id="currentTimeDisplay">12:00</span> | 天气: <span id="weatherDisplay">晴朗</span></div>
+                <div class="weather-info">
+                    <span class="weather-icon" id="weatherIcon">☀️</span>
+                    <span>风速: <span id="windSpeed">5</span> m/s</span>
+                    <span>浪高: <span id="waveHeightDisplay">0.5</span>m</span>
+                </div>
+            </div>
+        </div>
+        <!-- 波浪系统 -->
+        <div class="panel">
+            <div class="panel-header"><span class="panel-icon">W</span>波浪系统</div>
+            <div class="panel-content">
+                <div class="param-group">
+                    <div class="param-label">波浪组数 <span id="waveCountVal">3</span></div>
+                    <div class="range-row">
+                        <input type="range" id="waveCountSlider" min="2" max="10" step="1" value="3" oninput="updateWaveCount(this.value)">
+                    </div>
+                </div>
+                <div class="param-group">
+                    <div class="param-label">选择波浪组</div>
+                    <div class="param-row"><select id="waveSelect" onchange="loadWaveParams()"></select></div>
+                </div>
+                <div class="param-group">
+                    <div class="param-label">波长 (m)</div>
+                    <div class="range-row">
+                        <input type="number" id="waveLengthInput" value="4.0" step="0.1" min="0.5" max="10" onchange="applyWaveParams()">
+                        <input type="range" min="0.5" max="10" step="0.1" value="4.0" oninput="document.getElementById('waveLengthInput').value=this.value;applyWaveParams()">
+                    </div>
+                </div>
+                <div class="param-group">
+                    <div class="param-label">波高 (m) <span id="ampVal">1.0</span></div>
+                    <div class="range-row">
+                        <input type="range" id="ampSlider" min="0.1" max="10" step="0.1" value="1.0" oninput="syncAmp(this.value)">
+                        <input type="number" id="ampInput" value="1.0" step="0.1" min="0.1" max="10" onchange="syncAmp(this.value)">
+                    </div>
+                </div>
+                <div class="param-group">
+                    <div class="param-label">方向 (°)</div>
+                    <div class="range-row">
+                        <input type="range" id="dirSlider" min="0" max="360" step="1" value="45" oninput="syncDir(this.value)">
+                        <input type="number" id="dirInput" value="45" step="1" min="0" max="360" onchange="syncDir(this.value)">
+                    </div>
+                </div>
+                <div class="param-group">
+                    <div class="param-label">速度 (m/s)</div>
+                    <div class="range-row">
+                        <input type="range" id="spdSlider" min="0.5" max="30" step="0.5" value="3.0" oninput="syncSpd(this.value)">
+                        <input type="number" id="spdInput" value="3.0" step="0.5" onchange="syncSpd(this.value)">
+                    </div>
+                </div>
+                <div style="display:flex;gap:4px;margin-top:6px">
+                    <button class="mini-btn primary" onclick="resetWaves()">重置</button>
+                    <button class="mini-btn" onclick="randomizeWaves()">随机</button>
+                </div>
+            </div>
+        </div>
+        <!-- AI助手 -->
+        <div class="panel">
+            <div class="panel-header"><span class="panel-icon">A</span>AI助手</div>
+            <div class="panel-content">
+                <div class="chat-msgs" id="chatMessages" style="max-height:100px;overflow-y:auto;margin-bottom:6px"></div>
+                <div class="chat-input-row" style="display:flex;gap:4px">
+                    <input type="text" id="chatInput" placeholder="输入指令..." onkeypress="if(event.key==='Enter')sendToAI()" style="flex:1;padding:5px 8px;border:1px solid rgba(64,224,208,0.3);border-radius:4px;background:rgba(0,0,0,0.5);color:white;font-size:0.7rem">
+                    <button onclick="sendToAI()" style="padding:5px 12px;border:none;border-radius:4px;background:#0077b6;color:white;cursor:pointer;font-size:0.7rem">发送</button>
+                </div>
+            </div>
+        </div>
+        <!-- 虚拟训练场景 -->
+        <div class="panel">
+            <div class="panel-header"><span class="panel-icon">V</span>虚拟训练场景</div>
+            <div class="panel-content">
+                <div class="param-label">封闭区域</div>
+                <div class="transform-subtitle">区域大小 (长X 宽Z 高Y)</div>
+                <div class="transform-row">
+                    <span class="t-label">X</span><input type="number" class="transform-input" id="enclosureSizeX" value="40" step="1" min="5" max="500">
+                    <span class="t-label">Z</span><input type="number" class="transform-input" id="enclosureSizeZ" value="40" step="1" min="5" max="500">
+                    <span class="t-label">Y</span><input type="number" class="transform-input" id="enclosureSizeY" value="15" step="1" min="2" max="200">
+                </div>
+                <div class="transform-subtitle">区域位置</div>
+                <div class="transform-row">
+                    <span class="t-label">X</span><input type="number" class="transform-input" id="enclosurePosX" value="0" step="1">
+                    <span class="t-label">Y</span><input type="number" class="transform-input" id="enclosurePosY" value="0" step="1">
+                    <span class="t-label">Z</span><input type="number" class="transform-input" id="enclosurePosZ" value="0" step="1">
+                </div>
+                <div class="param-group" style="margin-top:6px">
+                    <div class="param-label">墙壁透明度 <span id="enclosureAlphaVal">0.3</span></div>
+                    <div class="range-row">
+                        <input type="range" id="enclosureAlphaSlider" min="0.05" max="0.9" step="0.05" value="0.3" oninput="document.getElementById('enclosureAlphaVal').textContent=parseFloat(this.value).toFixed(2)">
+                    </div>
+                </div>
+                <div style="display:flex;gap:4px;margin-top:6px">
+                    <button class="mini-btn primary" onclick="createEnclosure()">创建封闭区域</button>
+                    <button class="mini-btn" onclick="updateEnclosure()">更新区域</button>
+                    <button class="mini-btn danger" onclick="removeEnclosure()">移除</button>
+                </div>
+                <div style="display:flex;gap:4px;margin-top:6px">
+                    <button class="mode-btn" onclick="createDynamicObstacle()">动态障碍</button>
+                </div>
+            </div>
+        </div>
+        <!-- 路径规划 -->
+        <div class="panel">
+            <div class="panel-header"><span class="panel-icon">G</span>路径规划</div>
+            <div class="panel-content">
+                <div class="param-row" style="margin-bottom:6px">
+                    <select id="pathAlgo" style="flex:1"><option value="dijkstra">Dijkstra</option><option value="astar" selected>A*</option></select>
+                    <button class="mini-btn primary" onclick="runPathPlanning()">规划</button>
+                </div>
+                <div class="path-stats">节点: <span id="pathNodes">0</span> | 耗时: <span id="pathTime">0ms</span> | 长度: <span id="pathLen">0m</span></div>
+                <button class="mini-btn" onclick="clearPath()" style="margin-top:4px;width:100%">清除路径</button>
+            </div>
+        </div>
+        <!-- 任务导航 -->
+        <div class="panel">
+            <div class="panel-header"><span class="panel-icon">N</span>任务导航</div>
+            <div class="panel-content">
+                <div id="waypointList"></div>
+                <div style="display:flex;gap:4px;margin-top:4px">
+                    <button class="mini-btn" onclick="addWaypoint()">添加航点</button>
+                    <button class="mini-btn primary" onclick="startAutoNav()">自动导航</button>
+                    <button class="mini-btn danger" onclick="clearWaypoints()">清除</button>
+                </div>
+            </div>
+        </div>
+        <!-- 驾驶控制 -->
+        <div class="panel">
+            <div class="panel-header"><span class="panel-icon">D</span>驾驶控制</div>
+            <div class="panel-content">
+                <div class="param-label">驾驶模型</div>
+                <div class="drive-select-row">
+                    <select id="driveModelSelect" onchange="selectDriveModel(this.value)">
+                        <option value="">-- 选择驾驶模型 --</option>
+                    </select>
+                </div>
+                <div class="param-group">
+                    <div class="param-label">最大速度 (m/s) <span id="maxSpeedVal">125.0</span></div>
+                    <div class="range-row">
+                        <input type="range" id="maxSpeedSlider" min="0.5" max="250" step="0.5" value="125.0" oninput="document.getElementById('maxSpeedVal').textContent=parseFloat(this.value).toFixed(1)">
+                    </div>
+                </div>
+                <div class="param-group">
+                    <div class="param-label">加速度 (m/s²) <span id="accelVal">50.0</span></div>
+                    <div class="range-row">
+                        <input type="range" id="accelSlider" min="0.1" max="100" step="0.5" value="50.0" oninput="document.getElementById('accelVal').textContent=parseFloat(this.value).toFixed(1)">
+                    </div>
+                </div>
+                <div class="param-label">操控方式</div>
+                <div class="control-mode-row">
+                    <button class="control-mode-btn active" id="ctrlKeyboard" onclick="switchControlMode('keyboard')">键盘 WASD</button>
+                    <button class="control-mode-btn" id="ctrlGesture" onclick="switchControlMode('gesture')">手势操控</button>
+                </div>
+                <div class="gesture-indicator" id="gestureStatus" style="display:none;margin-top:6px">
+                    <span class="gesture-dot off" id="gestureDot"></span>
+                    <span id="gestureText">手势未激活</span>
+                </div>
+                <div style="display:flex;gap:4px;margin-top:6px">
+                    <button class="mode-btn" id="btnDrive" onclick="toggleManualDrive()">启动驾驶</button>
+                </div>
+            </div>
+        </div>
+        <!-- 观察模式 -->
+        <div class="panel">
+            <div class="panel-header"><span class="panel-icon">O</span>展示观察</div>
+            <div class="panel-content">
+                <div style="display:flex;gap:4px;flex-wrap:wrap">
+                    <button class="observe-btn" onclick="observeMode('orbit')">环绕观察</button>
+                    <button class="observe-btn" onclick="observeMode('top')">俯视</button>
+                    <button class="observe-btn" onclick="observeMode('front')">正视</button>
+                    <button class="observe-btn" onclick="observeMode('side')">侧视</button>
+                    <button class="observe-btn" onclick="observeMode('free')">自由</button>
+                </div>
+            </div>
+        </div>
+        <!-- Arduino硬件接口 -->
+        <div class="panel">
+            <div class="panel-header"><span class="panel-icon">H</span>Arduino硬件</div>
+            <div class="panel-content">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+                    <span class="hw-dot" id="hwDot"></span>
+                    <span id="hwStatusText" style="font-size:0.65rem">未连接</span>
+                </div>
+                <div class="param-row" style="margin-bottom:6px">
+                    <input type="text" id="wsUrl" value="ws://localhost:8080" style="flex:1;font-size:0.6rem;padding:4px;background:rgba(0,0,0,0.5);border:1px solid rgba(64,224,208,0.3);border-radius:4px;color:#40e0d0">
+                    <button class="mini-btn primary" onclick="connectArduinoHW()">连接</button>
+                </div>
+                <div class="hw-data-row">
+                    <div class="hw-cell"><div class="hw-val" id="hwTemp">--</div><div class="hw-lbl">温度°C</div></div>
+                    <div class="hw-cell"><div class="hw-val" id="hwBat">--</div><div class="hw-lbl">电池V</div></div>
+                    <div class="hw-cell"><div class="hw-val" id="hwSpeed">--</div><div class="hw-lbl">速度m/s</div></div>
+                    <div class="hw-cell"><div class="hw-val" id="hwDepth">--</div><div class="hw-lbl">深度m</div></div>
+                    <div class="hw-cell"><div class="hw-val" id="hwDist">--</div><div class="hw-lbl">距离cm</div></div>
+                    <div class="hw-cell"><div class="hw-val" id="hwRudder">--</div><div class="hw-lbl">舵角°</div></div>
+                </div>
+                <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">
+                    <button class="mini-btn" onclick="sendHW('M50,50')">前进</button>
+                    <button class="mini-btn" onclick="sendHW('M0,0')">停止</button>
+                    <button class="mini-btn" onclick="sendHW('S90')">舵90°</button>
+                    <button class="mini-btn" onclick="sendHW('R')">读数</button>
+                    <button class="mini-btn danger" onclick="sendHW('ESTOP')">急停</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<div id="toast"></div>
+
+<script>
+// ==================== 全局变量 ====================
+let scene, camera, renderer, controls;
+let models = [], selectedModel = null;
+let raycaster = new THREE.Raycaster(), mouse = new THREE.Vector2();
+let water, socket;
+let currentSpeed = 50;
+let isDragging = false, dragPlane = new THREE.Plane(new THREE.Vector3(0,1,0),0), dragOffset = new THREE.Vector3(), intersection = new THREE.Vector3();
+let frameCount = 0, lastTime = performance.now();
+
+// 坐标轴显示
+let axesScene, axesCamera, sceneAxesHelper, modelAxesHelper;
+
+// 物理引擎
+let physicsWorld, physicsRunning = true;
+let physBodies = [];
+let physicsParams = { gravity: -9.81, waterDensity: 1025, dragCoeff: 0.9 };
+const STEEL_DENSITY = 300;
+const DEFAULT_MODEL_DENSITY = 300;
+const DEFAULT_BOAT_DENSITY = 300;
+const MODEL_DENSITY_MIN = 1;
+const MODEL_DENSITY_MAX = 30000;
+const DEFAULT_MAX_SPEED = 125.0;
+const DEFAULT_ACCELERATION = 50.0;
+
+// Gerstner波浪
+let waveParams = [];
+let defaultWaves = [
+    { amplitude: 1.0, wavelength: 4.0, speed: 3.0, direction: 45, steepness: 0.20, phase: 0 },
+    { amplitude: 0.6, wavelength: 2.5, speed: 2.0, direction: 120, steepness: 0.15, phase: Math.PI*0.5 },
+    { amplitude: 0.3, wavelength: 1.5, speed: 1.5, direction: 270, steepness: 0.10, phase: Math.PI*1.2 }
+];
+
+// Arduino
+let hwSocket = null, hwConnected = false, hwData = {};
+
+// 时间环境
+let simTimeMinutes = 720;
+let simTimeSpeed = 2; // 时间流逝速度倍数
+let viewMode = 'above';
+let weather = {
+    type: 'clear', windSpeed: 5, waveHeight: 0.5, cloudCover: 0.2, rain: 0,
+    // 天气过渡参数
+    targetType: 'clear', targetWindSpeed: 5, targetWaveHeight: 0.5,
+    targetCloudCover: 0.2, targetRain: 0,
+    transitionProgress: 1, // 0-1, 1=已完成过渡
+    prevType: 'clear', prevWindSpeed: 5, prevWaveHeight: 0.5,
+    prevCloudCover: 0.2, prevRain: 0
+};
+let weatherTimer = 0, weatherChangeInterval = 180; // 每3分钟(模拟时间)可能变化天气
+let weatherTransitionSpeed = 0.02; // 天气过渡速度
+
+// 驾驶系统
+let driveModel = null, driveModelBody = null;
+let manualDriveActive = false;
+let driveKeys = {};
+let driveVelocity = new THREE.Vector3();
+let driveAngularVelocity = 0;
+let controlMode = 'keyboard'; // 'keyboard' | 'gesture'
+let gestureActive = false;
+let hands = null, gestureCamera = null;
+
+// 训练场景
+let trainingObjects = [];
+
+// 路径规划
+let pathLine = null;
+let gridNodes = [], gridSize = 40, gridRes = 2;
+
+// 任务导航
+let waypoints = [], activeNavModel = null, navIndex = 0, navRunning = false;
+
+// 水面网格
+let waterPlane, underwaterFog, underwaterParticles;
+let sunLight, underwaterLight, skySphere;
+
+// ==================== 初始化 ====================
+function init() {
+    const canvasArea = document.getElementById('canvas-area');
+    const w = canvasArea.clientWidth, h = canvasArea.clientHeight;
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x001220);
+    scene.fog = new THREE.FogExp2(0x80c5ff, 0.0008);
+
+    camera = new THREE.PerspectiveCamera(60, w/h, 0.1, 2000);
+    // 20度俯视视角：y=80, z=220 (tan20°≈0.364, 80/220≈0.364)
+    camera.position.set(0, 80, 220);
+
+    renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, logarithmicDepthBuffer: true });
+    renderer.setSize(w, h);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.BasicShadowMap;
+    canvasArea.appendChild(renderer.domElement);
+
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 5;
+    controls.maxDistance = 500;
+    controls.target.set(0, 0, 0);
+    controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
+    controls.rotateSpeed = 0.5;
+    controls.panSpeed = 0.8;
+
+    // 坐标轴显示场景（左上角小窗口）
+    axesScene = new THREE.Scene();
+    axesCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+    axesCamera.position.set(2.5, 2, 3.5);
+    axesCamera.lookAt(0, 0, 0);
+    // 场景绝对轴（细线，标准颜色）
+    sceneAxesHelper = new THREE.AxesHelper(20);
+    axesScene.add(sceneAxesHelper);
+    // 模型坐标轴（自定义颜色，带箭头尖端，与场景轴区分）
+    modelAxesHelper = new THREE.Group();
+    let modelColors = { x: 0xff8800, y: 0x00ddff, z: 0xff44ff }; // 橙、亮青、品红
+    function addModelAxisWithArrow(dir, color, len) {
+        // 轴线
+        let lineGeo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, 0, 0),
+            new THREE.Vector3(dir.x * len, dir.y * len, dir.z * len)
+        ]);
+        let lineMat = new THREE.LineBasicMaterial({ color: color, linewidth: 1, depthTest: false });
+        modelAxesHelper.add(new THREE.Line(lineGeo, lineMat));
+        // 箭头尖端（小球）
+        let tipGeo = new THREE.SphereGeometry(0.4, 6, 4);
+        let tipMat = new THREE.MeshBasicMaterial({ color: color, depthTest: false });
+        let tip = new THREE.Mesh(tipGeo, tipMat);
+        tip.position.set(dir.x * len, dir.y * len, dir.z * len);
+        modelAxesHelper.add(tip);
+    }
+    addModelAxisWithArrow({x:1,y:0,z:0}, modelColors.x, 12);
+    addModelAxisWithArrow({x:0,y:1,z:0}, modelColors.y, 12);
+    addModelAxisWithArrow({x:0,y:0,z:1}, modelColors.z, 12);
+    axesScene.add(modelAxesHelper);
+    // 半透明参考平面（场景轴底部）
+    let gridGeo = new THREE.PlaneGeometry(20, 20);
+    let gridMat = new THREE.MeshBasicMaterial({ color: 0x334455, side: THREE.DoubleSide, transparent: true, opacity: 0.15, depthTest: false });
+    let gridPlane = new THREE.Mesh(gridGeo, gridMat);
+    gridPlane.rotation.x = -Math.PI / 2;
+    gridPlane.position.y = -10;
+    axesScene.add(gridPlane);
+
+    addLights();
+    createOcean();
+    createWaterPlane();
+    createSkySphere();
+    createSeaFloor();
+    initPhysics();
+    initWaveParams();
+    createUnderwaterParticles();
+    createRainSystem();
+    setupEventListeners();
+    initWeather();
+
+    updateTime();
+    setInterval(updateTime, 1000);
+    // 初始化完成后创建默认小船
+    setTimeout(createDefaultBoat, 500);
+    animate();
+}
+
+let viewCenterLight = null;
+function addLights() {
+    scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+    sunLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    sunLight.position.set(-100, 100, 100);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.width = 1024;
+    sunLight.shadow.mapSize.height = 1024;
+    sunLight.shadow.camera.near = 0.5;
+    sunLight.shadow.camera.far = 500;
+    scene.add(sunLight);
+    scene.add(new THREE.HemisphereLight(0x80deea, 0x4a148c, 0.3));
+    underwaterLight = new THREE.PointLight(0x1e90ff, 0.6, 150);
+    underwaterLight.position.set(0, -30, 0);
+    underwaterLight.name = 'underwaterLight';
+    scene.add(underwaterLight);
+    // 视野中心放射状光源
+    viewCenterLight = new THREE.PointLight(0xffeeaa, 0.8, 200);
+    viewCenterLight.position.set(0, 20, 0);
+    scene.add(viewCenterLight);
+}
+
+function createSkySphere() {
+    let geo = new THREE.SphereGeometry(500, 64, 32);
+    let mat = new THREE.ShaderMaterial({
+        uniforms: {
+            topColor: { value: new THREE.Color(0x1a3a5c) },
+            midColor: { value: new THREE.Color(0x4a90d9) },
+            bottomColor: { value: new THREE.Color(0x87ceeb) },
+            sunColor: { value: new THREE.Color(0xffffff) },
+            sunPosition: { value: new THREE.Vector3(100, 80, 0) },
+            sunIntensity: { value: 1.0 },
+            time: { value: 0 }
+        },
+        vertexShader: `
+            varying vec3 vWorldPosition;
+            varying vec3 vNormal;
+            void main() {
+                vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+                vWorldPosition = worldPosition.xyz;
+                vNormal = normalize(mat3(modelMatrix) * normal);
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }`,
+        fragmentShader: `
+            uniform vec3 topColor;
+            uniform vec3 midColor;
+            uniform vec3 bottomColor;
+            uniform vec3 sunColor;
+            uniform vec3 sunPosition;
+            uniform float sunIntensity;
+            uniform float time;
+            varying vec3 vWorldPosition;
+            varying vec3 vNormal;
+            void main() {
+                vec3 viewDir = normalize(vWorldPosition);
+                float h = viewDir.y;
+                // 天空渐变
+                vec3 skyColor = mix(bottomColor, midColor, smoothstep(0.0, 0.3, h));
+                skyColor = mix(skyColor, topColor, smoothstep(0.3, 0.8, h));
+                // 太阳光晕
+                vec3 sunDir = normalize(sunPosition);
+                float sunAngle = dot(viewDir, sunDir);
+                float sunGlow = smoothstep(0.97, 0.99, sunAngle) * 0.5;
+                sunGlow += smoothstep(0.99, 1.0, sunAngle) * 0.5;
+                skyColor = mix(skyColor, sunColor, sunGlow * sunIntensity);
+                // 云层效果（简单）
+                float cloudNoise = sin(vWorldPosition.x * 0.01) * cos(vWorldPosition.z * 0.01);
+                cloudNoise += sin(vWorldPosition.x * 0.03 + time) * cos(vWorldPosition.z * 0.03);
+                cloudNoise = smoothstep(0.3, 0.7, cloudNoise * 0.5 + 0.5);
+                if (h > 0.1) {
+                    skyColor = mix(skyColor, vec3(1.0), cloudNoise * 0.3);
+                }
+                gl_FragColor = vec4(skyColor, 1.0);
+            }`,
+        side: THREE.BackSide
+    });
+    skySphere = new THREE.Mesh(geo, mat);
+    skySphere.name = 'skySphere';
+    scene.add(skySphere);
+}
+
+function createOcean() {
+    const oceanSize = 10000, oceanSeg = 128;
+    let oceanGeo = new THREE.PlaneGeometry(oceanSize, oceanSize, oceanSeg, oceanSeg);
+    oceanGeo.rotateX(-Math.PI/2);
+    let oceanMat = new THREE.MeshPhongMaterial({
+        color: 0x1a5588, specular: 0x4488cc,
+        shininess: 120, side: THREE.DoubleSide,
+        transparent: true, opacity: 0.82,
+        emissive: 0x001122, emissiveIntensity: 0.15
+    });
+    water = { mesh: new THREE.Mesh(oceanGeo, oceanMat), geo: oceanGeo };
+    water.mesh.receiveShadow = true;
+    water.mesh.name = 'ocean';
+    scene.add(water.mesh);
+    // 水下散射光平面
+    let uwGeo = new THREE.PlaneGeometry(10000, 10000);
+    uwGeo.rotateX(-Math.PI/2);
+    let uwMat = new THREE.MeshPhongMaterial({
+        color: 0x4488ff, specular: 0x112244,
+        shininess: 30, side: THREE.DoubleSide,
+        transparent: true, opacity: 0.25,
+        emissive: 0x112244, emissiveIntensity: 0.3
+    });
+    let uwPlane = new THREE.Mesh(uwGeo, uwMat);
+    uwPlane.position.y = -5;
+    uwPlane.name = 'underwaterScatter';
+    uwPlane.visible = false;
+    scene.add(uwPlane);
+}
+
+function createWaterPlane() {
+    let wpGeo = new THREE.PlaneGeometry(10000, 10000);
+    wpGeo.rotateX(-Math.PI/2);
+    waterPlane = new THREE.Mesh(wpGeo, new THREE.MeshBasicMaterial({ visible: false }));
+    waterPlane.position.y = 0;
+    waterPlane.name = 'waterPlane';
+    scene.add(waterPlane);
+}
+
+function getWaveHeight(x, z, t) {
+    let h = 0, time = t !== undefined ? t : performance.now() * 0.001;
+    for (let i = 0; i < waveParams.length; i++) {
+        let w = waveParams[i];
+        let dir = THREE.MathUtils.degToRad(w.direction);
+        let k = 2*Math.PI/w.wavelength;
+        let omega = 2*Math.PI*w.speed/w.wavelength;
+        h += w.amplitude * Math.sin(k*(Math.cos(dir)*x + Math.sin(dir)*z) + omega*time + w.phase);
+    }
+    return h;
+}
+
+function getWaveSlope(x, z, t) {
+    let sx = 0, sz = 0, time = t !== undefined ? t : performance.now() * 0.001;
+    for (let i = 0; i < waveParams.length; i++) {
+        let w = waveParams[i];
+        let dir = THREE.MathUtils.degToRad(w.direction);
+        let k = 2*Math.PI/w.wavelength;
+        let omega = 2*Math.PI*w.speed/w.wavelength;
+        let cosTerm = Math.cos(k*(Math.cos(dir)*x + Math.sin(dir)*z) + omega*time + w.phase);
+        sx += k*Math.cos(dir)*w.amplitude*cosTerm;
+        sz += k*Math.sin(dir)*w.amplitude*cosTerm;
+    }
+    return { x: sx, z: sz };
+}
+
+let oceanNormalSkip = 0;
+function updateOceanGeometry() {
+    if (!water || !water.geo) return;
+    let t = performance.now() * 0.001;
+    let pos = water.geo.attributes.position.array;
+    for (let i = 0; i < pos.length; i += 3) {
+        pos[i+1] = getWaveHeight(pos[i], pos[i+2], t);
+    }
+    water.geo.attributes.position.needsUpdate = true;
+    // 每3帧计算一次法线，减少GPU负载
+    oceanNormalSkip++;
+    if (oceanNormalSkip >= 3) {
+        water.geo.computeVertexNormals();
+        oceanNormalSkip = 0;
+    }
+}
+
+function createUnderwaterParticles() {
+    // 水中小型悬浮颗粒（浮游生物/泥沙）
+    let geo = new THREE.BufferGeometry();
+    let count = 500;
+    let positions = new Float32Array(count*3);
+    let sizes = new Float32Array(count);
+    let colors = new Float32Array(count*3);
+    for (let i = 0; i < count; i++) {
+        let i3 = i*3;
+        positions[i3] = (Math.random()-0.5)*500;
+        positions[i3+1] = -Math.random()*200;
+        positions[i3+2] = (Math.random()-0.5)*500;
+        sizes[i] = 0.3 + Math.random()*1.5;
+        // 蓝绿色调，随机变化
+        colors[i3] = 0.3 + Math.random()*0.3;
+        colors[i3+1] = 0.5 + Math.random()*0.4;
+        colors[i3+2] = 0.7 + Math.random()*0.3;
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    underwaterParticles = new THREE.Points(geo, new THREE.PointsMaterial({
+        size: 1.5, vertexColors: true, transparent: true,
+        opacity: 0.6, sizeAttenuation: true, depthWrite: false,
+        blending: THREE.NormalBlending
+    }));
+    underwaterParticles.visible = false;
+    underwaterParticles.name = 'underwaterParticles';
+    scene.add(underwaterParticles);
+
+    // 水下气泡（上升气泡）
+    let bubbleGeo = new THREE.BufferGeometry();
+    let bCount = 80;
+    let bPositions = new Float32Array(bCount*3);
+    let bData = [];
+    for (let i = 0; i < bCount; i++) {
+        let i3 = i*3;
+        bPositions[i3] = (Math.random()-0.5)*200;
+        bPositions[i3+1] = -Math.random()*150;
+        bPositions[i3+2] = (Math.random()-0.5)*200;
+        bData.push({
+            speed: 0.3 + Math.random()*1.5,
+            wobble: Math.random()*Math.PI*2,
+            wobbleSpeed: 0.5 + Math.random()*1.5,
+            wobbleAmp: 0.5 + Math.random()*2
+        });
+    }
+    bubbleGeo.setAttribute('position', new THREE.BufferAttribute(bPositions, 3));
+    bubbleGeo.userData = { bubbleData: bData };
+    let bubbles = new THREE.Points(bubbleGeo, new THREE.PointsMaterial({
+        size: 0.8, color: 0xaaddff, transparent: true,
+        opacity: 0.5, sizeAttenuation: true, depthWrite: false,
+        blending: THREE.AdditiveBlending
+    }));
+    bubbles.visible = false;
+    bubbles.name = 'underwaterBubbles';
+    scene.add(bubbles);
+}
+
+function updateUnderwaterParticles() {
+    let now = performance.now()*0.001;
+    // 悬浮颗粒微动
+    if (underwaterParticles && underwaterParticles.visible) {
+        let pos = underwaterParticles.geometry.attributes.position.array;
+        for (let i = 0; i < pos.length; i += 3) {
+            pos[i] += Math.sin(now + i*0.1) * 0.03;
+            pos[i+1] += Math.cos(now*0.7 + i*0.05) * 0.02;
+            pos[i+2] += Math.cos(now + i*0.08) * 0.03;
+        }
+        underwaterParticles.geometry.attributes.position.needsUpdate = true;
+    }
+    // 气泡上升
+    let bubbles = scene.getObjectByName('underwaterBubbles');
+    if (bubbles && bubbles.visible) {
+        let pos = bubbles.geometry.attributes.position.array;
+        let bData = bubbles.geometry.userData.bubbleData;
+        let count = bData.length;
+        for (let i = 0; i < count; i++) {
+            let i3 = i*3;
+            let bd = bData[i];
+            pos[i3+1] += bd.speed * 0.016;
+            pos[i3] += Math.sin(bd.wobble + now*bd.wobbleSpeed) * bd.wobbleAmp * 0.01;
+            pos[i3+2] += Math.cos(bd.wobble + now*bd.wobbleSpeed) * bd.wobbleAmp * 0.01;
+            if (pos[i3+1] > 0) {
+                pos[i3+1] = -150 - Math.random()*50;
+                pos[i3] = (Math.random()-0.5)*200;
+                pos[i3+2] = (Math.random()-0.5)*200;
+            }
+        }
+        bubbles.geometry.attributes.position.needsUpdate = true;
+    }
+}
+
+// 海底地形
+function createSeaFloor() {
+    // 海底沙地
+    let floorGeo = new THREE.PlaneGeometry(10000, 10000, 64, 64);
+    floorGeo.rotateX(-Math.PI/2);
+    let pos = floorGeo.attributes.position.array;
+    for (let i = 0; i < pos.length; i += 3) {
+        // 添加简单的起伏地形
+        pos[i+1] = -80 - Math.sin(pos[i]*0.01)*Math.cos(pos[i+2]*0.01)*10;
+    }
+    floorGeo.computeVertexNormals();
+    let floorMat = new THREE.MeshPhongMaterial({
+        color: 0x665544, specular: 0x111111,
+        shininess: 5, side: THREE.DoubleSide
+    });
+    let seaFloor = new THREE.Mesh(floorGeo, floorMat);
+    seaFloor.name = 'seaFloor';
+    seaFloor.receiveShadow = true;
+    scene.add(seaFloor);
+
+    // 海底岩石散布
+    for (let i = 0; i < 30; i++) {
+        let rockGeo = new THREE.IcosahedronGeometry(1 + Math.random()*3, 1);
+        let rock = new THREE.Mesh(rockGeo, new THREE.MeshPhongMaterial({
+            color: new THREE.Color().setHSL(0.08, 0.1, 0.2 + Math.random()*0.2),
+            specular: 0x111111, shininess: 10
+        }));
+        rock.position.set(
+            (Math.random()-0.5)*200,
+            -85 - Math.random()*10,
+            (Math.random()-0.5)*200
+        );
+        rock.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+        rock.name = 'seaRock';
+        scene.add(rock);
+    }
+}
+
+// ==================== 物理引擎 ====================
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+function limitScalar(v, maxAbs) {
+    if (!isFinite(v)) return 0;
+    return clamp(v, -maxAbs, maxAbs);
+}
+
+function getModelWorldSize(mesh) {
+    mesh.updateMatrixWorld(true);
+    let box = new THREE.Box3().setFromObject(mesh);
+    let size = new THREE.Vector3();
+    box.getSize(size);
+    return {
+        x: Math.max(size.x, 0.01),
+        y: Math.max(size.y, 0.01),
+        z: Math.max(size.z, 0.01)
+    };
+}
+
+function getBodyForModel(mesh) {
+    let idx = models.indexOf(mesh);
+    return idx >= 0 ? physBodies[idx] : null;
+}
+
+function updateHydroData(mesh, explicitVolume) {
+    if (!mesh) return { x: 1, y: 1, z: 1, volume: 1 };
+    let size = getModelWorldSize(mesh);
+    let boxVolume = Math.max(size.x * size.y * size.z, 0.000001);
+    let volume = explicitVolume !== undefined ? Math.max(parseFloat(explicitVolume) || boxVolume, 0.000001) : boxVolume;
+    mesh.userData.hullSize = { x: size.x, y: size.y, z: size.z };
+    mesh.userData.volume = volume;
+    return { x: size.x, y: size.y, z: size.z, volume: volume };
+}
+
+function getAverageSubmergedRatio(mesh, body) {
+    if (!mesh || !body) return 0;
+    let hull = mesh.userData.hullSize || updateHydroData(mesh);
+    let waterH = getWaveHeight(body.position.x, body.position.z);
+    let bottomY = body.position.y - hull.y * 0.5;
+    return clamp((waterH - bottomY) / Math.max(hull.y, 0.001), 0, 1);
+}
+
+function initPhysics() {
+    physicsWorld = new CANNON.World();
+    physicsWorld.gravity.set(0, physicsParams.gravity, 0);
+    physicsWorld.broadphase = new CANNON.NaiveBroadphase();
+    physicsWorld.solver.iterations = 40;
+    physicsWorld.solver.tolerance = 0.001;
+    physicsWorld.defaultContactMaterial.restitution = 0.02;
+    physicsWorld.defaultContactMaterial.friction = 0.35;
+    physicsWorld.defaultContactMaterial.contactEquationStiffness = 1e7;
+    physicsWorld.defaultContactMaterial.contactEquationRelaxation = 4;
+
+    // 水体不再作为“硬碰撞平面”，避免模型被挡在水面上。
+    // 水面只作为高度场参考；浮力、重力、阻力和波浪作用力由 applyBuoyancy 连续计算。
+    let waterMat = new CANNON.Material('water');
+    let shipMat = new CANNON.Material('ship');
+    physicsWorld.addContactMaterial(new CANNON.ContactMaterial(waterMat, shipMat, {
+        friction: 0.02, restitution: 0.0, contactEquationStiffness: 1e6
+    }));
+}
+
+function addPhysicsBody(mesh) {
+    let hydro = updateHydroData(mesh, mesh.userData.volume);
+    let density = mesh.userData.density || STEEL_DENSITY;
+    let mass = Math.max(density * hydro.volume, 0.001);
+
+    let shape = new CANNON.Box(new CANNON.Vec3(hydro.x * 0.5, hydro.y * 0.5, hydro.z * 0.5));
+    let body = new CANNON.Body({ mass: mass });
+    body.addShape(shape);
+    body.position.copy(mesh.position);
+    body.quaternion.copy(mesh.quaternion);
+    body.linearDamping = 0.015;
+    body.angularDamping = 0.08;
+    body.sleepSpeedLimit = 0.02;
+    body.sleepTimeLimit = 1.5;
+    body.userData = { mesh: mesh };
+    body.hydroParams = {
+        waterlineArea: hydro.x * hydro.z,
+        beam: hydro.x,
+        draft: 0,
+        blockCoefficient: 1.0
+    };
+    physicsWorld.addBody(body);
+    return body;
+}
+
+function rebuildPhysicsBody(mesh, preserveMotion) {
+    let idx = models.indexOf(mesh);
+    if (idx < 0) return null;
+    let oldBody = physBodies[idx];
+    let state = null;
+    if (oldBody) {
+        state = {
+            position: oldBody.position.clone(),
+            quaternion: oldBody.quaternion.clone(),
+            velocity: oldBody.velocity.clone(),
+            angularVelocity: oldBody.angularVelocity.clone()
+        };
+        physicsWorld.removeBody(oldBody);
+    }
+    let newBody = addPhysicsBody(mesh);
+    if (preserveMotion && state) {
+        newBody.position.copy(state.position);
+        newBody.quaternion.copy(state.quaternion);
+        newBody.velocity.copy(state.velocity);
+        newBody.angularVelocity.copy(state.angularVelocity);
+    } else {
+        positionBodyAtPhysicalDraft(mesh, newBody);
+    }
+    physBodies[idx] = newBody;
+    if (driveModel === mesh) driveModelBody = newBody;
+    return newBody;
+}
+
+function positionBodyAtPhysicalDraft(mesh, body) {
+    if (!mesh || !body) return;
+    let hull = mesh.userData.hullSize || updateHydroData(mesh);
+    let density = mesh.userData.density || STEEL_DENSITY;
+    let ratio = density / Math.max(physicsParams.waterDensity, 1);
+    let targetSubmerged = clamp(ratio, 0.05, 1.0);
+    let waterH = getWaveHeight(body.position.x, body.position.z);
+    body.position.y = waterH + hull.y * (0.5 - targetSubmerged);
+    body.velocity.set(0, 0, 0);
+    body.angularVelocity.set(0, 0, 0);
+    body.wakeUp();
+    mesh.position.copy(body.position);
+    mesh.quaternion.copy(body.quaternion);
+}
+
+function applyBuoyancy(mesh, body) {
+    if (!body || body.mass <= 0 || !mesh) return;
+    try {
+        let hull = mesh.userData.hullSize || updateHydroData(mesh);
+        let volume = Math.max(mesh.userData.volume || (hull.x * hull.y * hull.z), 0.000001);
+        let rho = physicsParams.waterDensity;
+        let g = Math.abs(physicsParams.gravity);
+        let Cd = physicsParams.dragCoeff;
+
+        // 多点浮力采样：中心、首尾、左右舷。波面高度不同会自然产生横摇/纵摇力矩。
+        let samples = [
+            { x: 0, z: 0, w: 0.40 },
+            { x: 0, z: hull.z * 0.38, w: 0.15 },
+            { x: 0, z: -hull.z * 0.38, w: 0.15 },
+            { x: hull.x * 0.38, z: 0, w: 0.15 },
+            { x: -hull.x * 0.38, z: 0, w: 0.15 }
+        ];
+
+        let submergedWeighted = 0;
+        let totalWeight = 0;
+        for (let i = 0; i < samples.length; i++) {
+            let s = samples[i];
+            let local = new CANNON.Vec3(s.x, 0, s.z);
+            let worldOffset = body.quaternion.vmult(local);
+            let samplePos = body.position.vadd(worldOffset);
+            let waterH = getWaveHeight(samplePos.x, samplePos.z);
+            let bottomY = samplePos.y - hull.y * 0.5;
+            let submerged = clamp((waterH - bottomY) / Math.max(hull.y, 0.001), 0, 1);
+            submergedWeighted += submerged * s.w;
+            totalWeight += s.w;
+
+            if (submerged <= 0) continue;
+            let displacedVolume = volume * s.w * submerged;
+            let lift = rho * g * displacedVolume;
+            let applyPoint = new CANNON.Vec3(samplePos.x, bottomY + submerged * hull.y * 0.5, samplePos.z);
+            body.applyForce(new CANNON.Vec3(0, lift, 0), applyPoint);
+        }
+
+        let submergedRatio = totalWeight > 0 ? clamp(submergedWeighted / totalWeight, 0, 1) : 0;
+        if (submergedRatio > 0) {
+            let vel = body.velocity;
+            let maxHydroForce = body.mass * g * 6.0;
+            let areaX = Math.max(hull.y * hull.z * submergedRatio, 0.001);
+            let areaZ = Math.max(hull.x * hull.y * submergedRatio, 0.001);
+            let areaY = Math.max(hull.x * hull.z * submergedRatio, 0.001);
+
+            let fx = -0.5 * rho * Cd * areaX * vel.x * Math.abs(vel.x);
+            let fz = -0.5 * rho * Cd * areaZ * vel.z * Math.abs(vel.z);
+            let fy = -0.5 * rho * 1.8 * areaY * vel.y * Math.abs(vel.y);
+            body.applyForce(new CANNON.Vec3(
+                limitScalar(fx, maxHydroForce),
+                limitScalar(fy, maxHydroForce),
+                limitScalar(fz, maxHydroForce)
+            ), body.position);
+
+            // 波浪坡度力：只使用排水浮力的小比例，避免“被波浪弹飞”。
+            let slope = getWaveSlope(body.position.x, body.position.z);
+            let waveBase = rho * g * volume * submergedRatio * 0.06;
+            body.applyForce(new CANNON.Vec3(
+                limitScalar(waveBase * slope.x, body.mass * g * 0.5),
+                0,
+                limitScalar(waveBase * slope.z, body.mass * g * 0.5)
+            ), body.position);
+
+            // 横荡/侧滑阻尼与角阻尼，模拟水体附加质量和黏性耗能。
+            let q = body.quaternion;
+            let right = q.vmult(new CANNON.Vec3(1,0,0)); right.y = 0;
+            let rLen = Math.sqrt(right.x*right.x + right.z*right.z) || 1;
+            right.x /= rLen; right.z /= rLen;
+            let sideSlip = vel.x * right.x + vel.z * right.z;
+            let sideDamping = -sideSlip * body.mass * (0.6 + 2.4 * submergedRatio);
+            body.applyForce(new CANNON.Vec3(right.x * sideDamping, 0, right.z * sideDamping), body.position);
+
+            let av = body.angularVelocity;
+            body.torque.x -= av.x * Math.max(body.inertia.x, 1) * (1.2 + 4.0 * submergedRatio);
+            body.torque.y -= av.y * Math.max(body.inertia.y, 1) * (0.4 + 1.8 * submergedRatio);
+            body.torque.z -= av.z * Math.max(body.inertia.z, 1) * (1.2 + 4.0 * submergedRatio);
+        } else {
+            // 出水后仅保留轻微空气阻力。
+            let vel = body.velocity;
+            let air = 0.02 * body.mass;
+            body.applyForce(new CANNON.Vec3(-vel.x * air, -vel.y * air * 0.2, -vel.z * air), body.position);
+        }
+    } catch(e) {
+        console.warn('applyBuoyancy failed:', e);
+    }
+}
+
+let lastPhysicsTime = performance.now();
+function updatePhysics() {
+    if (!physicsRunning) return;
+    let now = performance.now();
+    let dt = Math.min((now - lastPhysicsTime)/1000, 0.05);
+    lastPhysicsTime = now;
+
+    // 所有力都必须在物理步进前施加：先浮力/阻力/波浪，再推进与舵力。
+    for (let i = 0; i < models.length; i++) {
+        if (physBodies[i]) applyBuoyancy(models[i], physBodies[i]);
+    }
+
+    if (manualDriveActive && driveModel && driveModelBody) {
+        updateManualDrivePhysics();
+    }
+
+    physicsWorld.step(1/60, dt, 8);
+
+    for (let i = 0; i < models.length; i++) {
+        let body = physBodies[i];
+        let mesh = models[i];
+        if (!body || !mesh) continue;
+        mesh.position.copy(body.position);
+        mesh.quaternion.copy(body.quaternion);
+    }
+
+    if (viewCenterLight) {
+        viewCenterLight.position.copy(controls.target);
+        viewCenterLight.position.y += 10;
+    }
+}
+
+function getHorizontalForward(body) {
+    let forward = body.quaternion.vmult(new CANNON.Vec3(0, 0, 1));
+    forward.y = 0;
+    let len = Math.sqrt(forward.x*forward.x + forward.z*forward.z);
+    if (len < 0.0001) return new CANNON.Vec3(0,0,1);
+    return new CANNON.Vec3(forward.x/len, 0, forward.z/len);
+}
+
+function getHorizontalRight(body) {
+    let right = body.quaternion.vmult(new CANNON.Vec3(1, 0, 0));
+    right.y = 0;
+    let len = Math.sqrt(right.x*right.x + right.z*right.z);
+    if (len < 0.0001) return new CANNON.Vec3(1,0,0);
+    return new CANNON.Vec3(right.x/len, 0, right.z/len);
+}
+
+function applyDriveForces(mesh, body, throttle, rudder) {
+    if (!mesh || !body) return;
+    let maxSpeed = parseFloat(document.getElementById('maxSpeedVal').textContent) || DEFAULT_MAX_SPEED;
+    let acceleration = parseFloat(document.getElementById('accelVal').textContent) || DEFAULT_ACCELERATION;
+    let hull = mesh.userData.hullSize || updateHydroData(mesh);
+    let submergedRatio = getAverageSubmergedRatio(mesh, body);
+    let waterCoupling = 0.10 + 0.90 * submergedRatio;
+    let forward = getHorizontalForward(body);
+    let right = getHorizontalRight(body);
+    let vel = body.velocity;
+    let forwardSpeed = vel.x * forward.x + vel.z * forward.z;
+    let horizSpeed = Math.sqrt(vel.x*vel.x + vel.z*vel.z);
+
+    if (Math.abs(throttle) > 0.01) {
+        let reverseFactor = throttle < 0 ? 0.55 : 1.0;
+        let speedAlongInput = throttle * forwardSpeed;
+        let speedLimiter = speedAlongInput > 0 ? clamp(1 - speedAlongInput / Math.max(maxSpeed, 0.1), 0.08, 1.0) : 1.0;
+        let thrust = body.mass * acceleration * throttle * reverseFactor * waterCoupling * speedLimiter;
+        let force = new CANNON.Vec3(forward.x * thrust, 0, forward.z * thrust);
+        let propLocal = new CANNON.Vec3(0, -hull.y * 0.20, -hull.z * 0.42);
+        let propPoint = body.position.vadd(body.quaternion.vmult(propLocal));
+        body.applyForce(force, propPoint);
+    }
+
+    if (Math.abs(rudder) > 0.01) {
+        let speedAuthority = clamp(Math.abs(forwardSpeed) / Math.max(maxSpeed * 0.25, 1), 0.25, 1.0);
+        let yawTorque = rudder * body.mass * acceleration * Math.max(hull.z, hull.x) * 0.22 * waterCoupling * speedAuthority;
+        body.torque.y += yawTorque;
+        // 舵面侧向力作用于船尾，使转向不再是直接改角速度。
+        let lateral = body.mass * acceleration * rudder * 0.12 * waterCoupling * speedAuthority;
+        let rudderPoint = body.position.vadd(body.quaternion.vmult(new CANNON.Vec3(0, -hull.y*0.15, -hull.z*0.45)));
+        body.applyForce(new CANNON.Vec3(right.x * lateral, 0, right.z * lateral), rudderPoint);
+    }
+
+    // 超过上限时用反向水动力减速，而不是瞬间裁剪速度。
+    if (horizSpeed > maxSpeed) {
+        let excess = (horizSpeed - maxSpeed) / Math.max(maxSpeed, 0.1);
+        let brake = body.mass * acceleration * clamp(excess, 0, 2) * (0.8 + submergedRatio);
+        body.applyForce(new CANNON.Vec3(-vel.x/horizSpeed * brake, 0, -vel.z/horizSpeed * brake), body.position);
+        if (horizSpeed > maxSpeed * 1.35) {
+            let scale = (maxSpeed * 1.35) / horizSpeed;
+            body.velocity.x *= scale;
+            body.velocity.z *= scale;
+        }
+    }
+    body.wakeUp();
+}
+
+function updateManualDrivePhysics() {
+    if (!driveModel || !driveModelBody) return;
+    let throttle = 0;
+    let rudder = 0;
+    if (driveKeys['w']) throttle += 1;
+    if (driveKeys['s']) throttle -= 1;
+    if (driveKeys['a']) rudder -= 1;
+    if (driveKeys['d']) rudder += 1;
+    applyDriveForces(driveModel, driveModelBody, clamp(throttle, -1, 1), clamp(rudder, -1, 1));
+}
+
+function applyKeyboardNudgePhysics(key) {
+    if (!selectedModel) return;
+    let body = getBodyForModel(selectedModel);
+    if (!body) return;
+    let throttle = 0;
+    let rudder = 0;
+    if (key === 'w') throttle = 1;
+    if (key === 's') throttle = -1;
+    if (key === 'a') rudder = -1;
+    if (key === 'd') rudder = 1;
+    if (throttle !== 0 || rudder !== 0) {
+        applyDriveForces(selectedModel, body, throttle, rudder);
+    } else if (key === 'q' || key === 'e') {
+        let dir = key === 'q' ? 1 : -1;
+        let submergedRatio = getAverageSubmergedRatio(selectedModel, body);
+        let accel = (parseFloat(document.getElementById('accelVal').textContent) || DEFAULT_ACCELERATION) * 0.25;
+        body.applyForce(new CANNON.Vec3(0, body.mass * accel * dir * (0.3 + submergedRatio), 0), body.position);
+        body.wakeUp();
+    }
+}
+
+// ==================== 事件监听 ====================
+function setupEventListeners() {
+    let uploadArea = document.getElementById('uploadArea');
+    let fileInput = document.getElementById('fileInput');
+    uploadArea.addEventListener('click', function() { fileInput.click(); });
+    fileInput.addEventListener('change', handleFileSelect);
+
+    ['dragenter','dragover','dragleave','drop'].forEach(function(evt) {
+        uploadArea.addEventListener(evt, function(e) { e.preventDefault(); e.stopPropagation(); });
+        document.body.addEventListener(evt, function(e) { e.preventDefault(); e.stopPropagation(); });
+    });
+    ['dragenter','dragover'].forEach(function(evt) {
+        uploadArea.addEventListener(evt, function() { uploadArea.style.borderColor = '#40e0d0'; });
+    });
+    ['dragleave','drop'].forEach(function(evt) {
+        uploadArea.addEventListener(evt, function() { uploadArea.style.borderColor = 'rgba(64,224,208,0.4)'; });
+    });
+    uploadArea.addEventListener('drop', function(e) {
+        let files = e.dataTransfer.files;
+        if (files.length > 0) loadModel(files[0]);
+    });
+
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('resize', onWindowResize);
+    renderer.domElement.addEventListener('click', onCanvasClick);
+    renderer.domElement.addEventListener('mousedown', onMouseDown);
+    renderer.domElement.addEventListener('mousemove', onMouseMove);
+    renderer.domElement.addEventListener('mouseup', onMouseUp);
+    renderer.domElement.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+    renderer.domElement.addEventListener('wheel', onMouseWheel, { passive: false });
+}
+
+// ==================== 键盘控制 ====================
+function handleKeyDown(e) {
+    let key = e.key.toLowerCase();
+
+    // 手动驾驶时只记录输入，真正的推进力/舵力在 updateManualDrivePhysics 中连续施加。
+    if (manualDriveActive && controlMode === 'keyboard') {
+        if (key === 'w' || key === 'a' || key === 's' || key === 'd') {
+            driveKeys[key] = true;
+            e.preventDefault();
+        }
+        return;
+    }
+
+    // 非手动驾驶模式也不再直接改 position，而是给选中模型施加物理力。
+    if (['w','s','a','d','q','e'].includes(key)) {
+        applyKeyboardNudgePhysics(key);
+        updateTransformInputs();
+        e.preventDefault();
+        return;
+    }
+
+    if (key === 'r') {
+        camera.position.set(0, 80, 220);
+        controls.reset();
+    }
+}
+
+function handleKeyUp(e) {
+    let key = e.key.toLowerCase();
+    if (key === 'w' || key === 'a' || key === 's' || key === 'd') {
+        driveKeys[key] = false;
+    }
+}
+
+// ==================== 文件处理 ====================
+function handleFileSelect(e) {
+    let files = e.target.files;
+    if (files.length > 0) loadModel(files[0]);
+}
+
+function createDefaultBoat() {
+    try {
+        let group = new THREE.Group();
+        group.userData = { fileName: '小船', originalColor: 0x2196f3, density: DEFAULT_BOAT_DENSITY, volume: 0, hullSize: { x: 16, y: 6.4, z: 48 } };
+
+        // === 船体：使用Shape挤出，形成尖头船体 ===
+        let hullShape = new THREE.Shape();
+        let hw = 5, hl = 15; // 半宽、半长
+        hullShape.moveTo(0, -hl);        // 船尾中点
+        hullShape.lineTo(-hw*0.6, -hl*0.7); // 船尾左角
+        hullShape.lineTo(-hw, 0);         // 船中左
+        hullShape.lineTo(-hw*0.8, hl*0.6); // 船头左
+        hullShape.lineTo(0, hl);          // 船头尖
+        hullShape.lineTo(hw*0.8, hl*0.6); // 船头右
+        hullShape.lineTo(hw, 0);          // 船中右
+        hullShape.lineTo(hw*0.6, -hl*0.7); // 船尾右角
+        hullShape.closePath();
+
+        let extrudeSettings = { steps: 1, depth: 3, bevelEnabled: true, bevelThickness: 0.3, bevelSize: 0.3, bevelSegments: 3 };
+        let hullGeo = new THREE.ExtrudeGeometry(hullShape, extrudeSettings);
+        hullGeo.translate(0, 0, -1.5); // 居中深度
+        hullGeo.rotateX(-Math.PI/2); // 旋转使船体水平放置（Z轴为深度方向）
+        // 此时船体沿Z轴（长）、X轴（宽）、Y轴（高）
+
+        let hullMat = new THREE.MeshPhongMaterial({
+            color: 0xe8e8e8, specular: 0x333333,
+            shininess: 100, flatShading: false
+        });
+        let hullMesh = new THREE.Mesh(hullGeo, hullMat);
+        hullMesh.castShadow = true;
+        hullMesh.receiveShadow = true;
+        group.add(hullMesh);
+
+        // === 甲板 ===
+        let deckGeo = new THREE.BoxGeometry(9, 0.3, 26);
+        let deckMat = new THREE.MeshPhongMaterial({
+            color: 0xc4a35a, specular: 0x111111,
+            shininess: 50
+        });
+        let deckMesh = new THREE.Mesh(deckGeo, deckMat);
+        deckMesh.position.set(0, 1.8, 0);
+        deckMesh.castShadow = true;
+        deckMesh.receiveShadow = true;
+        group.add(deckMesh);
+
+        // === 船舱/驾驶室 ===
+        let cabinGeo = new THREE.BoxGeometry(7, 2, 8);
+        let cabinMat = new THREE.MeshPhongMaterial({
+            color: 0xffffff, specular: 0x222222,
+            shininess: 80
+        });
+        let cabinMesh = new THREE.Mesh(cabinGeo, cabinMat);
+        cabinMesh.position.set(0, 3.0, -4);
+        cabinMesh.castShadow = true;
+        cabinMesh.receiveShadow = true;
+        group.add(cabinMesh);
+
+        // === 船舱窗户 ===
+        let winGeo = new THREE.BoxGeometry(6.5, 1.2, 0.2);
+        let winMat = new THREE.MeshPhongMaterial({
+            color: 0x87ceeb, specular: 0x4488cc,
+            shininess: 200, emissive: 0x112233, emissiveIntensity: 0.3
+        });
+        let winMesh = new THREE.Mesh(winGeo, winMat);
+        winMesh.position.set(0, 3.0, -4.1);
+        group.add(winMesh);
+
+        // === 船尾围栏 ===
+        let railGeo = new THREE.BoxGeometry(8.5, 0.15, 0.3);
+        let railMat = new THREE.MeshPhongMaterial({
+            color: 0xcccccc, specular: 0x444444,
+            shininess: 120
+        });
+        let railMesh = new THREE.Mesh(railGeo, railMat);
+        railMesh.position.set(0, 2.5, -12);
+        group.add(railMesh);
+
+        // === 烟囱 ===
+        let chimneyGeo = new THREE.CylinderGeometry(0.4, 0.5, 3, 8);
+        let chimneyMat = new THREE.MeshPhongMaterial({
+            color: 0x333333, specular: 0x111111,
+            shininess: 60
+        });
+        let chimneyMesh = new THREE.Mesh(chimneyGeo, chimneyMat);
+        chimneyMesh.position.set(2, 3.8, -1);
+        chimneyMesh.castShadow = true;
+        group.add(chimneyMesh);
+
+        // 设置Group属性
+        group.rotation.set(0, 0, 0);
+        group.castShadow = true;
+        group.receiveShadow = true;
+        group.scale.set(1.6, 1.6, 1.6);
+        group.position.set(0, 0, 0);
+
+        updateHydroData(group);
+        group.userData.autoScale = 1.6;
+        group.userData.originalColor = 0x2196f3;
+        
+        scene.add(group);
+        models.push(group);
+        
+        let body = addPhysicsBody(group);
+        if (body) {
+            positionBodyAtPhysicalDraft(group, body);
+            body.sleepSpeedLimit = 100;
+            body.wakeUp();
+        }
+        physBodies.push(body);
+        
+        selectModel(group);
+        driveModel = group;
+        driveModelBody = body;
+        manualDriveActive = true;
+        
+        let btn = document.getElementById('btnDrive');
+        if (btn) {
+            btn.textContent = '停止驾驶';
+            btn.classList.add('active');
+        }
+        
+        document.getElementById('maxSpeedSlider').value = DEFAULT_MAX_SPEED;
+        document.getElementById('maxSpeedVal').textContent = DEFAULT_MAX_SPEED.toFixed(1);
+        document.getElementById('accelSlider').value = DEFAULT_ACCELERATION;
+        document.getElementById('accelVal').textContent = DEFAULT_ACCELERATION.toFixed(1);
+        updateModelList();
+        updateDriveModelSelect();
+        updateTransformInputs();
+        showToast('已生成更大的默认小船：按W/S施加推进力，A/D施加舵力矩，浮态由实时排水体积计算');
+    } catch(err) { showToast('生成小船失败: '+err.message, true); }
+}
+
+function loadModel(file) {
+    if (file.name.split('.').pop().toLowerCase() !== 'stl') {
+        showToast('仅支持STL格式文件', true);
+        return;
+    }
+    showToast('正在加载: ' + file.name);
+    let reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            let loader = new THREE.STLLoader();
+            let geometry = loader.parse(e.target.result);
+            geometry.computeBoundingBox();
+            let center = new THREE.Vector3();
+            geometry.boundingBox.getCenter(center);
+            geometry.translate(-center.x, -center.y, -center.z);
+            let material = new THREE.MeshPhongMaterial({
+                color: 0x2196f3, specular: 0x111111,
+                shininess: 200, transparent: true, opacity: 0.9
+            });
+            let mesh = new THREE.Mesh(geometry, material);
+            mesh.rotation.set(THREE.MathUtils.degToRad(-90), 0, 0);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            mesh.userData = { fileName: file.name, originalColor: 0x2196f3, density: DEFAULT_MODEL_DENSITY, volume: 0 };
+
+            // 自动计算缩放：使模型在当前视野中占据合理大小
+            let box = new THREE.Box3().setFromObject(mesh);
+            let size = new THREE.Vector3();
+            box.getSize(size);
+            let maxDim = Math.max(size.x, size.y, size.z);
+            // 目标：模型最大维度在视野中约为30个单位
+            let targetSize = 30;
+            let autoScale = targetSize / Math.max(maxDim, 0.01);
+            autoScale = Math.max(0.01, Math.min(100, autoScale));
+            mesh.scale.set(autoScale, autoScale, autoScale);
+
+            // 自动居中：放置在当前摄像机视野中心
+            let camTarget = controls.target.clone();
+            mesh.position.set(camTarget.x, 0, camTarget.z);
+
+            updateHydroData(mesh);
+            mesh.userData.autoScale = autoScale;
+            scene.add(mesh);
+            models.push(mesh);
+            let body = addPhysicsBody(mesh);
+            physBodies.push(body);
+            if (body) {
+                positionBodyAtPhysicalDraft(mesh, body);
+                body.quaternion.copy(mesh.quaternion);
+            }
+            selectModel(mesh);
+            updateModelList();
+            updateDriveModelSelect();
+            // 更新体积输入框：通过体积控制后续模型大小。
+            document.getElementById('volumeInput').value = (mesh.userData.volume || 0).toFixed(3);
+            showToast('加载成功: '+file.name+'；默认密度为 '+DEFAULT_MODEL_DENSITY+' kg/m³，可直接输入体积改变模型大小');
+        } catch(err) { showToast('加载失败: '+err.message, true); }
+    };
+    reader.onerror = function() {
+        showToast('文件读取失败，请重试', true);
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+// ==================== 模型选择 ====================
+function setModelColor(model, color) {
+    // 如果是恢复原始颜色且有存储的原始颜色，则逐个恢复
+    if (color === model.userData.originalColor && model.userData.childColors) {
+        let idx = 0;
+        model.traverse(function(child) {
+            if (child.isMesh && child.material && child.material.color) {
+                if (idx < model.userData.childColors.length) {
+                    child.material.color.set(model.userData.childColors[idx]);
+                    idx++;
+                }
+            }
+        });
+        return;
+    }
+    // 设置颜色前保存原始颜色
+    if (!model.userData.childColors) {
+        let colors = [];
+        model.traverse(function(child) {
+            if (child.isMesh && child.material && child.material.color) {
+                colors.push(child.material.color.getHex());
+            }
+        });
+        model.userData.childColors = colors;
+    }
+    model.traverse(function(child) {
+        if (child.isMesh && child.material) {
+            if (Array.isArray(child.material)) {
+                child.material.forEach(function(m) { if (m.color) m.color.set(color); });
+            } else if (child.material.color) {
+                child.material.color.set(color);
+            }
+        }
+    });
+}
+
+function disposeModel(model) {
+    model.traverse(function(child) {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+            if (Array.isArray(child.material)) {
+                child.material.forEach(function(m) { m.dispose(); });
+            } else {
+                child.material.dispose();
+            }
+        }
+    });
+}
+
+function selectModel(model) {
+    if (selectedModel) setModelColor(selectedModel, selectedModel.userData.originalColor);
+    selectedModel = model;
+    if (model) {
+        setModelColor(model, 0xff9800);
+        updateHydroData(model, model.userData.volume);
+        let density = model.userData.density || STEEL_DENSITY;
+        document.getElementById('modelDensityInput').value = density;
+        document.getElementById('densityModelVal').textContent = density;
+        document.getElementById('volumeInput').value = (model.userData.volume || 0).toFixed(3);
+    }
+    updateModelList();
+    updateTransformInputs();
+    updateModelInfoDisplay();
+}
+
+function updateModelList() {
+    let list = document.getElementById('modelList');
+    list.innerHTML = models.map(function(m,i) {
+        let marker = (driveModel===m)?' [驾驶]':'';
+        return '<div class="model-list-item'+(selectedModel===m?' selected':'')+'" onclick="selectModel(models['+i+'])">'+
+            '<span class="model-list-name">'+m.userData.fileName+marker+'</span>'+
+            '<button class="model-list-del" onclick="event.stopPropagation(); deleteModel('+i+')">X</button></div>';
+    }).join('');
+    document.getElementById('mdlCount').textContent = models.length;
+}
+
+function updateDriveModelSelect() {
+    let sel = document.getElementById('driveModelSelect');
+    let cv = sel.value;
+    sel.innerHTML = '<option value="">-- 选择驾驶模型 --</option>';
+    for (let i=0;i<models.length;i++) {
+        sel.innerHTML += '<option value="'+i+'"'+(i.toString()===cv?' selected':'')+'>'+models[i].userData.fileName+'</option>';
+    }
+}
+
+function selectDriveModel(idx) {
+    if (idx==='') { driveModel=null; driveModelBody=null; return; }
+    driveModel = models[parseInt(idx)];
+    driveModelBody = physBodies[parseInt(idx)];
+    if (driveModel) showToast('驾驶模型: '+driveModel.userData.fileName);
+    updateModelList();
+}
+
+function deleteModel(index) {
+    let model = models[index];
+    if (driveModel===model) { driveModel=null; driveModelBody=null; }
+    if (manualDriveActive && driveModel===null) { manualDriveActive = false; }
+    if (gestureActive && driveModel===null) { gestureActive = false; }
+    scene.remove(model);
+    disposeModel(model);
+    if (physBodies[index]) physicsWorld.removeBody(physBodies[index]);
+    models.splice(index,1);
+    physBodies.splice(index,1);
+    if (selectedModel===model) selectedModel=null;
+    updateModelList();
+    updateDriveModelSelect();
+    updateModelInfoDisplay();
+    showToast('模型已删除');
+}
+
+function resetScene() {
+    if (manualDriveActive) { manualDriveActive = false; }
+    if (gestureActive) { stopGesture(); }
+    models.forEach(function(m,i) {
+        scene.remove(m); disposeModel(m);
+        if (physBodies[i]) physicsWorld.removeBody(physBodies[i]);
+    });
+    models=[]; physBodies=[]; driveModel=null; driveModelBody=null; selectedModel=null;
+    camera.position.set(0,80,220); controls.reset();
+    updateModelList(); updateDriveModelSelect(); updateModelInfoDisplay();
+    clearTrainingScene(); clearPath(); clearWaypoints();
+    showToast('场景已重置');
+}
+
+// ==================== 鼠标交互 ====================
+function onCanvasClick(e) {
+    mouse.x = (e.clientX/window.innerWidth)*2-1;
+    mouse.y = -(e.clientY/window.innerHeight)*2+1;
+    raycaster.setFromCamera(mouse, camera);
+    let intersects = raycaster.intersectObjects(models);
+    if (intersects.length>0) selectModel(intersects[0].object);
+    else selectModel(null);
+}
+
+function onMouseDown(e) {
+    if (e.button!==0) return;
+    mouse.x = (e.clientX/window.innerWidth)*2-1;
+    mouse.y = -(e.clientY/window.innerHeight)*2+1;
+    raycaster.setFromCamera(mouse, camera);
+    let intersects = raycaster.intersectObjects(models);
+    if (intersects.length>0) {
+        isDragging=true; controls.enabled=false;
+        let intersected = intersects[0].object;
+        if (selectedModel!==intersected) selectModel(intersected);
+        dragPlane.setFromNormalAndCoplanarPoint(camera.getWorldDirection(new THREE.Vector3()).negate(), selectedModel.position);
+        raycaster.ray.intersectPlane(dragPlane, intersection);
+        dragOffset.copy(selectedModel.position).sub(intersection);
+        renderer.domElement.style.cursor='grabbing';
+    }
+}
+
+function onMouseMove(e) {
+    if (!isDragging||!selectedModel) return;
+    mouse.x = (e.clientX/window.innerWidth)*2-1;
+    mouse.y = -(e.clientY/window.innerHeight)*2+1;
+    raycaster.setFromCamera(mouse, camera);
+    if (raycaster.ray.intersectPlane(dragPlane, intersection)) {
+        selectedModel.position.copy(intersection.add(dragOffset));
+        syncSelectedBodyTransform();
+    }
+    updateTransformInputs();
+}
+
+function onMouseUp(e) {
+    if (e.button!==0) return;
+    if (isDragging) { isDragging=false; controls.enabled=true; renderer.domElement.style.cursor='grab'; }
+}
+
+function onMouseWheel(e) {
+    // 模型尺寸改为通过“体积”数值精确输入；滚轮不再改变模型缩放，避免误触导致体积失真。
+    if (e.shiftKey && selectedModel) {
+        e.preventDefault();
+        showToast('请在“模型体积”中输入具体数值来改变模型大小');
+    }
+}
+
+function onWindowResize() {
+    let ca = document.getElementById('canvas-area');
+    let w=ca.clientWidth, h=ca.clientHeight;
+    if (w>0&&h>0) { renderer.setSize(w,h); camera.aspect=w/h; camera.updateProjectionMatrix(); }
+}
+
+// ==================== 变换控制 ====================
+function updateTransformInputs() {
+    if (!selectedModel) return;
+    document.getElementById('posX').value = selectedModel.position.x.toFixed(2);
+    document.getElementById('posY').value = selectedModel.position.y.toFixed(2);
+    document.getElementById('posZ').value = selectedModel.position.z.toFixed(2);
+    document.getElementById('rotX').value = THREE.MathUtils.radToDeg(selectedModel.rotation.x).toFixed(1);
+    document.getElementById('rotY').value = THREE.MathUtils.radToDeg(selectedModel.rotation.y).toFixed(1);
+    document.getElementById('rotZ').value = THREE.MathUtils.radToDeg(selectedModel.rotation.z).toFixed(1);
+    updateHydroData(selectedModel, selectedModel.userData.volume);
+    document.getElementById('volumeInput').value = (selectedModel.userData.volume || 0).toFixed(3);
+}
+
+function syncSelectedBodyTransform() {
+    let body = getBodyForModel(selectedModel);
+    if (!body || !selectedModel) return;
+    body.position.copy(selectedModel.position);
+    body.quaternion.copy(selectedModel.quaternion);
+    body.velocity.set(0,0,0);
+    body.angularVelocity.set(0,0,0);
+    body.wakeUp();
+}
+
+function applyPosition() {
+    if (!selectedModel) { showToast('请先选择一个模型', true); return; }
+    let x=parseFloat(document.getElementById('posX').value);
+    let y=parseFloat(document.getElementById('posY').value);
+    let z=parseFloat(document.getElementById('posZ').value);
+    if (!isNaN(x)&&!isNaN(y)&&!isNaN(z)) {
+        selectedModel.position.set(x,y,z);
+        syncSelectedBodyTransform();
+        showToast('位置已更新，物理体已同步');
+    }
+}
+
+function applyRotation() {
+    if (!selectedModel) { showToast('请先选择一个模型', true); return; }
+    let x=THREE.MathUtils.degToRad(parseFloat(document.getElementById('rotX').value)||0);
+    let y=THREE.MathUtils.degToRad(parseFloat(document.getElementById('rotY').value)||0);
+    let z=THREE.MathUtils.degToRad(parseFloat(document.getElementById('rotZ').value)||0);
+    selectedModel.rotation.set(x,y,z);
+    syncSelectedBodyTransform();
+    showToast('旋转已更新，物理体已同步');
+}
+
+function applyVolumeFromInput(val) {
+    if (!selectedModel) { showToast('请先选择一个模型', true); return; }
+    let targetVolume = parseFloat(val);
+    if (isNaN(targetVolume) || targetVolume <= 0) targetVolume = selectedModel.userData.volume || 1;
+    targetVolume = clamp(targetVolume, 0.000001, 1000000000);
+
+    updateHydroData(selectedModel, selectedModel.userData.volume);
+    let currentVolume = Math.max(selectedModel.userData.volume || 0.000001, 0.000001);
+    let scaleFactor = Math.cbrt(targetVolume / currentVolume);
+    selectedModel.scale.multiplyScalar(scaleFactor);
+    updateHydroData(selectedModel, targetVolume);
+    selectedModel.userData.volume = targetVolume;
+
+    rebuildPhysicsBody(selectedModel, true);
+    document.getElementById('volumeInput').value = targetVolume.toFixed(3);
+    updateModelInfoDisplay();
+    showToast('模型体积已设置为 '+targetVolume.toFixed(3)+' m³，尺寸与物理体已重建');
+}
+
+// 兼容旧按钮/旧缓存调用；新界面统一通过体积输入改变模型大小。
+function applyScaleFromSlider(val) { applyVolumeFromInput(document.getElementById('volumeInput').value); }
+function applyScaleFromInput(val) { applyVolumeFromInput(document.getElementById('volumeInput').value); }
+
+function updateHullSize(mesh) {
+    if (!mesh) return;
+    updateHydroData(mesh, mesh.userData.volume);
+    let idx = models.indexOf(mesh);
+    if (idx >= 0 && physBodies[idx]) {
+        let density = mesh.userData.density || STEEL_DENSITY;
+        physBodies[idx].mass = density * mesh.userData.volume;
+        physBodies[idx].updateMassProperties();
+        physBodies[idx].wakeUp();
+    }
+}
+
+function resetTransform() {
+    if (!selectedModel) return;
+    selectedModel.position.set(0,0,0);
+    selectedModel.rotation.set(0,0,0);
+    selectedModel.scale.set(1,1,1);
+    updateHydroData(selectedModel);
+    rebuildPhysicsBody(selectedModel, false);
+    updateTransformInputs();
+    updateModelInfoDisplay();
+    showToast('变换已重置，浮态按当前密度重新计算');
+}
+
+function applyAllTransform() {
+    applyPosition();
+    applyRotation();
+    applyVolumeFromInput(document.getElementById('volumeInput').value);
+}
+
+function updateModelInfoDisplay() {
+    if (!selectedModel) document.getElementById('modelInfoDisplay').textContent='未选中模型';
+    else {
+        updateHydroData(selectedModel, selectedModel.userData.volume);
+        let volume = selectedModel.userData.volume || 0;
+        let density = selectedModel.userData.density || STEEL_DENSITY;
+        let ratio = density / Math.max(physicsParams.waterDensity, 1);
+        let state = ratio < 1 ? ('预计浸没 '+(ratio*100).toFixed(0)+'%') : '密度大于水：将下沉';
+        document.getElementById('modelInfoDisplay').textContent = selectedModel.userData.fileName+' | 体积:'+volume.toFixed(2)+'m³ | 密度:'+density+'kg/m³ | '+state;
+    }
+}
+
+// ==================== 模型密度 ====================
+function updateModelDensity(value) {
+    if (!selectedModel) return;
+    let density = parseFloat(value);
+    if (isNaN(density)) density = DEFAULT_MODEL_DENSITY;
+    density = clamp(density, MODEL_DENSITY_MIN, MODEL_DENSITY_MAX);
+    selectedModel.userData.density = density;
+    document.getElementById('modelDensityInput').value = density;
+    document.getElementById('densityModelVal').textContent = density;
+    updateHydroData(selectedModel, selectedModel.userData.volume);
+    let idx = models.indexOf(selectedModel);
+    if (idx>=0&&physBodies[idx]) {
+        let vol = selectedModel.userData.volume || 1;
+        physBodies[idx].mass = density * vol;
+        physBodies[idx].updateMassProperties();
+        physBodies[idx].wakeUp();
+    }
+    updateModelInfoDisplay();
+    showToast('模型密度已更新: '+density+' kg/m³；浮态将由浮力/重力重新平衡');
+}
+
+// ==================== 物理引擎控制 ====================
+function updateGravity(val) {
+    physicsParams.gravity = parseFloat(val);
+    physicsWorld.gravity.set(0, physicsParams.gravity, 0);
+    document.getElementById('gravityVal').textContent = physicsParams.gravity.toFixed(1);
+}
+
+function updateDensity(val) {
+    physicsParams.waterDensity = parseFloat(val);
+    document.getElementById('densityVal').textContent = physicsParams.waterDensity;
+}
+
+function updateDrag(val) {
+    physicsParams.dragCoeff = parseFloat(val);
+    document.getElementById('dragVal').textContent = physicsParams.dragCoeff.toFixed(1);
+}
+
+function togglePhysics() {
+    physicsRunning = !physicsRunning;
+    let btn = document.getElementById('btnPhysics');
+    btn.textContent = physicsRunning?'暂停物理':'启动物理';
+    if (!physicsRunning) btn.style.background='#e63946';
+    else btn.style.background='';
+    showToast(physicsRunning?'物理引擎运行中':'物理引擎已暂停');
+}
+
+function applyImpulse() {
+    if (!selectedModel) { showToast('请先选择一个模型', true); return; }
+    let idx = models.indexOf(selectedModel);
+    if (idx>=0&&physBodies[idx]) {
+        physBodies[idx].applyImpulse(new CANNON.Vec3(0,500,0), physBodies[idx].position);
+        showToast('已施加向上冲量');
+    }
+}
+
+// ==================== 视角与时间环境 ====================
+function setViewMode(mode) {
+    viewMode = mode;
+    document.getElementById('viewAbove').classList.toggle('active', mode==='above');
+    document.getElementById('viewBelow').classList.toggle('active', mode==='below');
+    let uwScatter = scene.getObjectByName('underwaterScatter');
+    if (mode==='below') {
+        // 水下视野：距离水面更低
+        camera.position.set(0, -30, 60);
+        controls.target.set(0, -30, 0);
+        if (underwaterLight) underwaterLight.intensity = 2.5;
+        if (underwaterParticles) underwaterParticles.visible = true;
+        let bubbles = scene.getObjectByName('underwaterBubbles');
+        if (bubbles) bubbles.visible = true;
+        if (uwScatter) uwScatter.visible = true;
+        scene.fog = new THREE.FogExp2(0x001a33, 0.0015);
+        if (water && water.mesh) {
+            water.mesh.material.opacity = 0.25;
+            water.mesh.material.color.setHex(0x0a3366);
+        }
+        scene.children.forEach(function(c) {
+            if (c.isAmbientLight) { c.intensity = 0.08; c.color.setHex(0x2244aa); }
+        });
+        if (sunLight) sunLight.intensity = 0.15;
+    } else {
+        // 水上视野：距离水面更高，尽可能远离水面
+        camera.position.set(0, 80, 220);
+        controls.target.set(0, 0, 0);
+        if (underwaterLight) underwaterLight.intensity = 0.6;
+        if (underwaterParticles) underwaterParticles.visible = false;
+        let bubbles = scene.getObjectByName('underwaterBubbles');
+        if (bubbles) bubbles.visible = false;
+        if (uwScatter) uwScatter.visible = false;
+        scene.fog = new THREE.FogExp2(0x80c5ff, 0.0008);
+        if (water && water.mesh) {
+            water.mesh.material.opacity = 0.82;
+            water.mesh.material.color.setHex(0x1a5588);
+        }
+        scene.children.forEach(function(c) {
+            if (c.isAmbientLight) { c.intensity = 0.35; c.color.setHex(0xffffff); }
+        });
+        if (sunLight) sunLight.intensity = 1.0;
+    }
+    controls.update();
+    showToast(mode==='above'?'水上视角':'水下视角');
+}
+
+function updateSimTime(value) {
+    simTimeMinutes = parseInt(value);
+    let hours = Math.floor(simTimeMinutes/60);
+    let mins = simTimeMinutes%60;
+    let timeStr = (hours<10?'0'+hours:hours)+':'+(mins<10?'0'+mins:mins);
+    document.getElementById('timeLabel').textContent = timeStr;
+    document.getElementById('currentTimeDisplay').textContent = timeStr;
+    applyTimeEnvironment();
+}
+
+function updateTimeSpeed(value) {
+    simTimeSpeed = parseFloat(value);
+    document.getElementById('timeSpeedVal').textContent = simTimeSpeed.toFixed(1) + 'x';
+}
+
+function applyTimeEnvironment() {
+    let hours = Math.floor(simTimeMinutes/60);
+    let mins = simTimeMinutes%60;
+    let hourFrac = hours + mins/60;
+
+    // === 太阳位置（精确天文近似） ===
+    // 太阳高度角：noon=90°, midnight=-90° (简化模型)
+    let sunAltitude = Math.sin((hourFrac - 6) / 24 * Math.PI * 2);
+    let sunAzimuth = Math.cos((hourFrac - 6) / 24 * Math.PI * 2);
+
+    let sunDistance = 150;
+    let sunX = sunAzimuth * sunDistance;
+    let sunY = sunAltitude * 100;
+    let sunZ = 30;
+
+    // 太阳可见性
+    let sunVisible = sunAltitude > -0.1;
+
+    if (sunLight) {
+        sunLight.position.set(sunX, sunY, sunZ);
+
+        // 太阳强度（使用平滑过渡）
+        let baseIntensity = Math.max(0.02, sunAltitude) * 1.2;
+        // 黎明/黄昏过渡带
+        let twilightFactor = 0;
+        if (sunAltitude < 0.1 && sunAltitude > -0.2) {
+            // 在黎明/黄昏区域内平滑过渡
+            twilightFactor = (sunAltitude + 0.2) / 0.3;
+            twilightFactor = twilightFactor * twilightFactor * (3 - 2 * twilightFactor); // smoothstep
+        } else if (sunAltitude >= 0.1) {
+            twilightFactor = 1;
+        }
+        sunLight.intensity = Math.min(1.2, baseIntensity * twilightFactor);
+
+        // 太阳颜色（基于大气散射模型）
+        // 日出/日落时太阳光穿过更厚的大气层，呈现暖色
+        let colorT = 1 - Math.abs(sunAltitude) / 0.5;
+        colorT = Math.max(0, Math.min(1, colorT));
+        let warmColor = new THREE.Color(0xff4400);
+        let dayColor = new THREE.Color(0xffffff);
+        let nightColor = new THREE.Color(0x334466);
+
+        if (sunAltitude > 0.3) {
+            // 白天
+            sunLight.color.copy(dayColor);
+        } else if (sunAltitude > 0) {
+            // 日出
+            let t = 1 - sunAltitude / 0.3;
+            sunLight.color.lerpColors(warmColor, dayColor, 1 - t);
+        } else if (sunAltitude > -0.2) {
+            // 日落/黄昏
+            let t = (-sunAltitude) / 0.2;
+            sunLight.color.lerpColors(warmColor, nightColor, t);
+        } else {
+            // 夜间
+            sunLight.color.copy(nightColor);
+        }
+    }
+
+    // === 环境光（天空散射光） ===
+    let ambIntensity = 0.03 + Math.max(0, sunAltitude) * 0.4;
+    scene.children.forEach(function(c) {
+        if (c.isAmbientLight) {
+            c.intensity = ambIntensity;
+            if (sunAltitude > 0.2) {
+                c.color.setHex(0xffffff);
+            } else if (sunAltitude > 0) {
+                let t = 1 - sunAltitude / 0.2;
+                c.color.lerpColors(new THREE.Color(0xffcc88), new THREE.Color(0xffffff), 1 - t);
+            } else if (sunAltitude > -0.15) {
+                let t = (-sunAltitude) / 0.15;
+                c.color.lerpColors(new THREE.Color(0xff8866), new THREE.Color(0x334466), t);
+            } else {
+                c.color.setHex(0x223355);
+            }
+        }
+    });
+
+    // === 天空球着色器 ===
+    if (skySphere && skySphere.material.uniforms) {
+        skySphere.material.uniforms.sunPosition.value.set(sunX, sunY, sunZ);
+        skySphere.material.uniforms.sunIntensity.value = Math.max(0, sunAltitude);
+        skySphere.material.uniforms.time.value = simTimeMinutes * 0.001;
+
+        // 天空颜色基于太阳高度
+        let topColor = new THREE.Color();
+        let midColor = new THREE.Color();
+        let bottomColor = new THREE.Color();
+
+        if (sunAltitude > 0.2) {
+            // 日间
+            topColor.setHex(0x1a3a5c);
+            midColor.setHex(0x4a90d9);
+            bottomColor.setHex(0x87ceeb);
+        } else if (sunAltitude > 0) {
+            // 日出初期
+            let t = sunAltitude / 0.2;
+            topColor.lerpColors(new THREE.Color(0x2a1050), new THREE.Color(0x1a3a5c), t);
+            midColor.lerpColors(new THREE.Color(0xff6600), new THREE.Color(0x4a90d9), t);
+            bottomColor.lerpColors(new THREE.Color(0xffcc88), new THREE.Color(0x87ceeb), t);
+        } else if (sunAltitude > -0.15) {
+            // 日落
+            let t = (sunAltitude + 0.15) / 0.15;
+            topColor.lerpColors(new THREE.Color(0x1a0030), new THREE.Color(0x2a1050), t);
+            midColor.lerpColors(new THREE.Color(0xff4400), new THREE.Color(0xff6600), t);
+            bottomColor.lerpColors(new THREE.Color(0xff9966), new THREE.Color(0xffcc88), t);
+        } else {
+            // 夜间
+            topColor.setHex(0x000011);
+            midColor.setHex(0x000022);
+            bottomColor.setHex(0x111133);
+        }
+
+        skySphere.material.uniforms.topColor.value.copy(topColor);
+        skySphere.material.uniforms.midColor.value.copy(midColor);
+        skySphere.material.uniforms.bottomColor.value.copy(bottomColor);
+    }
+
+    // === 场景背景 ===
+    if (sunAltitude > 0.15) {
+        scene.background = new THREE.Color(0x87CEEB);
+    } else if (sunAltitude > 0) {
+        scene.background = new THREE.Color(0x5a4738);
+    } else if (sunAltitude > -0.15) {
+        scene.background = new THREE.Color(0x2a1a10);
+    } else {
+        scene.background = new THREE.Color(0x000a1a);
+    }
+
+    // === 水色随光照变化 ===
+    if (water && water.mesh && viewMode === 'above') {
+        let waterColor = new THREE.Color();
+        if (sunAltitude > 0.15) {
+            waterColor.setHex(0x1a5588);
+        } else if (sunAltitude > 0) {
+            waterColor.setHex(0x2a3a5a);
+        } else if (sunAltitude > -0.15) {
+            waterColor.setHex(0x1a2a4a);
+        } else {
+            waterColor.setHex(0x0a1a3a);
+        }
+        water.mesh.material.color.copy(waterColor);
+    }
+
+    // === 水下光线随深度和时间变化 ===
+    if (underwaterLight && viewMode === 'below') {
+        let depthFactor = Math.max(0, sunAltitude) * 0.8 + 0.2;
+        underwaterLight.intensity = depthFactor * 2.5;
+    }
+
+    // === 天气计时器 ===
+    weatherTimer++;
+    if (weatherTimer > weatherChangeInterval) {
+        weatherTimer = 0;
+        updateWeather();
+    }
+    updateWeatherTransition();
+    updateWeatherDisplay();
+    updateRainEffect();
+}
+
+function initWeather() {
+    // 初始天气：根据初始时间(12:00)确定
+    weather.type = 'clear';
+    weather.windSpeed = 3;
+    weather.waveHeight = 0.3;
+    weather.cloudCover = 0.15;
+    weather.rain = 0;
+    weather.targetType = weather.type;
+    weather.targetWindSpeed = weather.windSpeed;
+    weather.targetWaveHeight = weather.waveHeight;
+    weather.targetCloudCover = weather.cloudCover;
+    weather.targetRain = weather.rain;
+    weather.transitionProgress = 1;
+    updateWeatherDisplay();
+}
+
+function updateWeather() {
+    let hourFrac = Math.floor(simTimeMinutes/60) + simTimeMinutes%60/60;
+    let isDaytime = hourFrac > 6 && hourFrac < 18;
+    let isDawn = hourFrac > 5 && hourFrac <= 7;
+    let isDusk = hourFrac >= 17 && hourFrac < 19;
+    let isNight = hourFrac >= 20 || hourFrac <= 4;
+
+    // 基于马尔可夫链的天气状态转移概率
+    // 当前天气 -> 下一天气的概率分布（考虑时间因素）
+    let transitionProbs = {
+        'clear':  { clear: 0.60, cloudy: 0.25, rain: 0.10, storm: 0.05 },
+        'cloudy': { clear: 0.35, cloudy: 0.40, rain: 0.20, storm: 0.05 },
+        'rain':   { clear: 0.20, cloudy: 0.35, rain: 0.35, storm: 0.10 },
+        'storm':  { clear: 0.15, cloudy: 0.25, rain: 0.35, storm: 0.25 }
+    };
+
+    // 时间修正：夜间更可能保持晴朗，黎明/黄昏更可能多云
+    if (isNight) {
+        transitionProbs['clear'].clear += 0.15;
+        transitionProbs['clear'].rain -= 0.05;
+        transitionProbs['clear'].storm -= 0.05;
+    }
+    if (isDawn || isDusk) {
+        transitionProbs['clear'].cloudy += 0.1;
+        transitionProbs['clear'].clear -= 0.1;
+    }
+
+    let probs = transitionProbs[weather.type] || transitionProbs['clear'];
+    let rand = Math.random();
+    let cumProb = 0;
+    let newType = 'clear';
+    for (let type in probs) {
+        cumProb += probs[type];
+        if (rand <= cumProb) { newType = type; break; }
+    }
+
+    // 设置目标天气参数
+    weather.prevType = weather.type;
+    weather.prevWindSpeed = weather.windSpeed;
+    weather.prevWaveHeight = weather.waveHeight;
+    weather.prevCloudCover = weather.cloudCover;
+    weather.prevRain = weather.rain;
+
+    weather.targetType = newType;
+    weather.transitionProgress = 0;
+
+    // 基于目标天气类型和时间计算参数
+    let baseWind, baseWave, baseCloud, baseRain;
+    switch (newType) {
+        case 'clear':
+            baseWind = isDaytime ? 2 + Math.random()*6 : 1 + Math.random()*3;
+            baseWave = 0.1 + Math.random()*0.5;
+            baseCloud = 0.05 + Math.random()*0.2;
+            baseRain = 0;
+            break;
+        case 'cloudy':
+            baseWind = isDaytime ? 5 + Math.random()*10 : 3 + Math.random()*7;
+            baseWave = 0.4 + Math.random()*0.8;
+            baseCloud = 0.5 + Math.random()*0.3;
+            baseRain = 0;
+            break;
+        case 'rain':
+            baseWind = 8 + Math.random()*12;
+            baseWave = 0.8 + Math.random()*1.5;
+            baseCloud = 0.7 + Math.random()*0.25;
+            baseRain = 0.4 + Math.random()*0.5;
+            break;
+        case 'storm':
+            baseWind = 15 + Math.random()*20;
+            baseWave = 2.0 + Math.random()*4.0;
+            baseCloud = 0.85 + Math.random()*0.15;
+            baseRain = 0.8 + Math.random()*0.2;
+            break;
+        default:
+            baseWind = 3; baseWave = 0.3; baseCloud = 0.2; baseRain = 0;
+    }
+
+    weather.targetWindSpeed = baseWind;
+    weather.targetWaveHeight = baseWave;
+    weather.targetCloudCover = baseCloud;
+    weather.targetRain = baseRain;
+}
+
+function updateWeatherTransition() {
+    if (weather.transitionProgress >= 1) return;
+    weather.transitionProgress += weatherTransitionSpeed;
+    if (weather.transitionProgress >= 1) {
+        weather.transitionProgress = 1;
+        weather.type = weather.targetType;
+        weather.windSpeed = weather.targetWindSpeed;
+        weather.waveHeight = weather.targetWaveHeight;
+        weather.cloudCover = weather.targetCloudCover;
+        weather.rain = weather.targetRain;
+    } else {
+        let t = weather.transitionProgress;
+        // 使用 smoothstep 进行平滑过渡
+        let st = t * t * (3 - 2 * t);
+        weather.windSpeed = weather.prevWindSpeed + (weather.targetWindSpeed - weather.prevWindSpeed) * st;
+        weather.waveHeight = weather.prevWaveHeight + (weather.targetWaveHeight - weather.prevWaveHeight) * st;
+        weather.cloudCover = weather.prevCloudCover + (weather.targetCloudCover - weather.prevCloudCover) * st;
+        weather.rain = weather.prevRain + (weather.targetRain - weather.prevRain) * st;
+        // 类型在过渡中途切换
+        if (t > 0.5) weather.type = weather.targetType;
+    }
+    // 更新波浪参数以匹配天气
+    if (waveParams.length > 0) {
+        waveParams[0].amplitude = weather.waveHeight * 0.6;
+        waveParams[0].speed = weather.windSpeed * 0.5;
+        if (waveParams.length > 1) {
+            waveParams[1].amplitude = weather.waveHeight * 0.35;
+            waveParams[1].speed = weather.windSpeed * 0.3;
+        }
+    }
+    updateWeatherDisplay();
+}
+
+function updateWeatherDisplay() {
+    let icons = { clear:'☀️', cloudy:'⛅', rain:'🌧️', storm:'⛈️' };
+    let names = { clear:'晴朗', cloudy:'多云', rain:'下雨', storm:'暴风雨' };
+    document.getElementById('weatherIcon').textContent = icons[weather.type]||'☀️';
+    document.getElementById('weatherDisplay').textContent = names[weather.type]||'晴朗';
+    document.getElementById('windSpeed').textContent = weather.windSpeed.toFixed(1);
+    document.getElementById('waveHeightDisplay').textContent = weather.waveHeight.toFixed(1);
+}
+
+// ==================== 雨雪粒子系统 ====================
+let rainParticles = null;
+function createRainSystem() {
+    let geo = new THREE.BufferGeometry();
+    let count = 1000;
+    let positions = new Float32Array(count * 3);
+    let velocities = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+        let i3 = i * 3;
+        positions[i3] = (Math.random() - 0.5) * 200;
+        positions[i3 + 1] = Math.random() * 100 + 20;
+        positions[i3 + 2] = (Math.random() - 0.5) * 200;
+        velocities[i] = 20 + Math.random() * 30;
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.userData = { velocities: velocities, count: count };
+    rainParticles = new THREE.Points(geo, new THREE.PointsMaterial({
+        size: 0.3, color: 0xaaccff, transparent: true,
+        opacity: 0.6, sizeAttenuation: true, depthWrite: false,
+        blending: THREE.AdditiveBlending
+    }));
+    rainParticles.visible = false;
+    rainParticles.name = 'rainSystem';
+    scene.add(rainParticles);
+}
+
+function updateRainEffect() {
+    if (!rainParticles) return;
+    let shouldRain = (weather.type === 'rain' || weather.type === 'storm');
+    rainParticles.visible = shouldRain;
+    if (shouldRain) {
+        rainParticles.material.opacity = weather.type === 'storm' ? 0.8 : 0.5;
+        let pos = rainParticles.geometry.attributes.position.array;
+        let vels = rainParticles.geometry.userData.velocities;
+        let count = rainParticles.geometry.userData.count;
+        for (let i = 0; i < count; i++) {
+            let i3 = i * 3;
+            pos[i3 + 1] -= vels[i] * 0.016;
+            if (pos[i3 + 1] < 0) {
+                pos[i3 + 1] = 100 + Math.random() * 50;
+                pos[i3] = (Math.random() - 0.5) * 200;
+                pos[i3 + 2] = (Math.random() - 0.5) * 200;
+            }
+            // 风的影响
+            pos[i3] += weather.windSpeed * 0.01;
+        }
+        rainParticles.geometry.attributes.position.needsUpdate = true;
+    }
+    // 雾效
+    if (weather.type === 'rain') {
+        scene.fog = new THREE.FogExp2(new THREE.Color(0x445566), 0.0006);
+    } else if (weather.type === 'storm') {
+        scene.fog = new THREE.FogExp2(new THREE.Color(0x334455), 0.001);
+    } else if (weather.type === 'cloudy') {
+        scene.fog = new THREE.FogExp2(new THREE.Color(0x8899aa), 0.0005);
+    }
+}
+
+// ==================== 波浪系统 ====================
+function initWaveParams() {
+    waveParams = defaultWaves.map(function(w) { return Object.assign({}, w); });
+    updateWaveSelect();
+    updateWaveCountDisplay();
+}
+
+function updateWaveCount(val) {
+    let count = parseInt(val);
+    while (waveParams.length<count) {
+        waveParams.push({ amplitude:0.5, wavelength:3, speed:2, direction:Math.random()*360, steepness:0.15, phase:Math.random()*Math.PI*2 });
+    }
+    while (waveParams.length>count) waveParams.pop();
+    document.getElementById('waveCountVal').textContent = count;
+    updateWaveSelect();
+}
+
+function updateWaveSelect() {
+    let sel = document.getElementById('waveSelect');
+    let cv = sel.value;
+    sel.innerHTML = '';
+    for (let i=0;i<waveParams.length;i++) {
+        sel.innerHTML += '<option value="'+i+'"'+(i.toString()===cv?' selected':'')+'>波浪组 '+(i+1)+'</option>';
+    }
+    if (waveParams.length>0) loadWaveParams();
+}
+
+function loadWaveParams() {
+    let idx = parseInt(document.getElementById('waveSelect').value);
+    if (idx>=0&&idx<waveParams.length) {
+        let w = waveParams[idx];
+        document.getElementById('waveLengthInput').value = w.wavelength;
+        document.getElementById('ampSlider').value = w.amplitude;
+        document.getElementById('ampInput').value = w.amplitude;
+        document.getElementById('ampVal').textContent = w.amplitude.toFixed(1);
+        document.getElementById('dirSlider').value = w.direction;
+        document.getElementById('dirInput').value = w.direction;
+        document.getElementById('spdSlider').value = w.speed;
+        document.getElementById('spdInput').value = w.speed;
+    }
+}
+
+function applyWaveParams() {
+    let idx = parseInt(document.getElementById('waveSelect').value);
+    if (idx>=0&&idx<waveParams.length) {
+        waveParams[idx].wavelength = parseFloat(document.getElementById('waveLengthInput').value);
+        waveParams[idx].amplitude = parseFloat(document.getElementById('ampInput').value);
+        waveParams[idx].direction = parseFloat(document.getElementById('dirInput').value);
+        waveParams[idx].speed = parseFloat(document.getElementById('spdInput').value);
+    }
+}
+
+function syncAmp(val) {
+    document.getElementById('ampInput').value = val;
+    document.getElementById('ampVal').textContent = parseFloat(val).toFixed(1);
+    applyWaveParams();
+}
+
+function syncDir(val) {
+    document.getElementById('dirInput').value = val;
+    applyWaveParams();
+}
+
+function syncSpd(val) {
+    document.getElementById('spdInput').value = val;
+    applyWaveParams();
+}
+
+function resetWaves() {
+    waveParams = defaultWaves.map(function(w) { return Object.assign({}, w); });
+    document.getElementById('waveCountSlider').value = 3;
+    updateWaveCountDisplay();
+    updateWaveSelect();
+    showToast('波浪已重置');
+}
+
+function randomizeWaves() {
+    for (let i=0;i<waveParams.length;i++) {
+        waveParams[i].amplitude = 0.1+Math.random()*3;
+        waveParams[i].wavelength = 1+Math.random()*8;
+        waveParams[i].speed = 1+Math.random()*10;
+        waveParams[i].direction = Math.random()*360;
+    }
+    updateWaveSelect();
+    showToast('波浪已随机化');
+}
+
+function updateWaveCountDisplay() {
+    document.getElementById('waveCountVal').textContent = waveParams.length;
+}
+
+// ==================== 驾驶控制 ====================
+function switchControlMode(mode) {
+    controlMode = mode;
+    document.getElementById('ctrlKeyboard').classList.toggle('active', mode==='keyboard');
+    document.getElementById('ctrlGesture').classList.toggle('active', mode==='gesture');
+    if (mode==='gesture') {
+        document.getElementById('gestureStatus').style.display = 'flex';
+        if (manualDriveActive && !gestureActive) startGesture();
+        showToast('已切换到手势操控 - 手掌移动控制船舶方向');
+    } else {
+        document.getElementById('gestureStatus').style.display = 'none';
+        if (gestureActive) stopGesture();
+        showToast('已切换到键盘操控 - 使用WASD控制船舶');
+    }
+}
+
+function toggleManualDrive() {
+    if (!driveModel) { showToast('请先选择驾驶模型', true); return; }
+    manualDriveActive = !manualDriveActive;
+    let btn = document.getElementById('btnDrive');
+    if (manualDriveActive) {
+        btn.textContent = '停止驾驶';
+        btn.classList.add('active');
+        if (controlMode==='gesture') startGesture();
+        if (driveModelBody) {
+            driveModelBody.sleepSpeedLimit = 100;
+            driveModelBody.wakeUp();
+        }
+        showToast('手动驾驶已启动');
+    } else {
+        btn.textContent = '启动驾驶';
+        btn.classList.remove('active');
+        if (gestureActive) stopGesture();
+        if (driveModelBody) {
+            driveModelBody.sleepSpeedLimit = 0.05;
+            driveModelBody.velocity.set(0,0,0);
+            driveModelBody.angularVelocity.set(0,0,0);
+        }
+        showToast('手动驾驶已停止');
+    }
+}
+
+// ==================== 手势控制 ====================
+function toggleGestureDrive() {
+    gestureActive = !gestureActive;
+    if (gestureActive) startGesture();
+    else stopGesture();
+}
+
+function startGesture() {
+    if (gestureActive) return;
+    gestureActive = true;
+    document.getElementById('gestureDot').className = 'gesture-dot on';
+    document.getElementById('gestureText').textContent = '手势已激活';
+    document.getElementById('gestureStatus').style.display = 'flex';
+    // 显示手势摄像头预览窗口
+    let preview = document.getElementById('gestureVideoPreview');
+    if (preview) preview.style.display = 'block';
+    initGestureCamera();
+}
+
+function stopGesture() {
+    gestureActive = false;
+    document.getElementById('gestureDot').className = 'gesture-dot off';
+    document.getElementById('gestureText').textContent = '手势未激活';
+    // 隐藏手势摄像头预览窗口
+    let preview = document.getElementById('gestureVideoPreview');
+    if (preview) preview.style.display = 'none';
+    if (gestureCamera) {
+        gestureCamera.stop();
+        gestureCamera = null;
+    }
+    // 清除手势驾驶输入
+    gestureDriveInput = { x: 0, z: 0 };
+}
+
+let gestureDriveInput = { x: 0, z: 0 };
+
+function initGestureCamera() {
+    if (!window.Hands) {
+        showToast('手势库加载中，请稍后再试...', true);
+        return;
+    }
+    try {
+        // 使用预览窗口中的视频元素
+        let video = document.getElementById('gestureVideoEl');
+        if (video.srcObject) {
+            // 摄像头已初始化，重启
+            gestureCamera.start();
+            showToast('手势摄像头已启动');
+            return;
+        }
+        hands = new Hands({
+            locateFile: function(f) {
+                return 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/' + f;
+            }
+        });
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.75,
+            minTrackingConfidence: 0.5
+        });
+        hands.onResults(onHandResults);
+        gestureCamera = new Camera(video, {
+            onFrame: async function() {
+                await hands.send({ image: video });
+            },
+            width: 640,
+            height: 480
+        });
+        gestureCamera.start();
+        showToast('手势摄像头已启动 - 手掌移动控制方向');
+    } catch(e) {
+        showToast('手势初始化失败: ' + e.message, true);
+        gestureActive = false;
+        document.getElementById('gestureDot').className = 'gesture-dot off';
+        document.getElementById('gestureText').textContent = '手势未激活';
+    }
+}
+
+function onHandResults(results) {
+    // 仅在手势激活且控制模式为手势时处理
+    if (!gestureActive || controlMode !== 'gesture' || !manualDriveActive || !driveModelBody) return;
+    
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        let lm = results.multiHandLandmarks[0];
+        // 手腕位置 (0) - 作为参考中心
+        let wrist = lm[0];
+        // 中指指尖 (12) - 用于方向控制
+        let midTip = lm[12];
+        // 食指指尖 (8)
+        let idxTip = lm[8];
+        // 拇指指尖 (4)
+        let thumbTip = lm[4];
+
+        // 手掌中心 = 手腕和指尖之间的中点
+        let palmCenter = {
+            x: (wrist.x + midTip.x) / 2,
+            y: (wrist.y + midTip.y) / 2
+        };
+
+        // 指尖相对于手腕的偏移 - 用于方向控制
+        let dx = midTip.x - wrist.x;
+        let dy = midTip.y - wrist.y;
+
+        // 手势到驾驶方向的映射
+        // dy < -0.05: 手向上 → 前进
+        // dy > 0.05: 手向下 → 后退
+        // dx < -0.05: 手向左 → 左转
+        // dx > 0.05: 手向右 → 右转
+        let inputX = 0, inputZ = 0;
+
+        // 死区
+        let deadZone = 0.06;
+        if (Math.abs(dy) > deadZone) {
+            inputZ = -dy * 2; // 负号：手向上=前进(z负方向)
+        }
+        if (Math.abs(dx) > deadZone) {
+            inputX = dx * 1.5;
+        }
+
+        // 钳制输入
+        gestureDriveInput.x = Math.max(-1, Math.min(1, inputX));
+        gestureDriveInput.z = Math.max(-1, Math.min(1, inputZ));
+
+        // 如果手势有输入，将手势输入转换为物理驱动
+        if (Math.abs(gestureDriveInput.x) > 0.01 || Math.abs(gestureDriveInput.z) > 0.01) {
+            driveKeys['w'] = gestureDriveInput.z < -0.1;
+            driveKeys['s'] = gestureDriveInput.z > 0.1;
+            driveKeys['a'] = gestureDriveInput.x < -0.1;
+            driveKeys['d'] = gestureDriveInput.x > 0.1;
+        } else {
+            driveKeys['w'] = false;
+            driveKeys['s'] = false;
+            driveKeys['a'] = false;
+            driveKeys['d'] = false;
+        }
+    } else {
+        // 没有检测到手 - 清除驾驶输入
+        driveKeys['w'] = false;
+        driveKeys['s'] = false;
+        driveKeys['a'] = false;
+        driveKeys['d'] = false;
+        gestureDriveInput = { x: 0, z: 0 };
+    }
+}
+
+// ==================== 路径规划 ====================
+function runPathPlanning() {
+    if (!selectedModel) { showToast('请先选择一个模型', true); return; }
+    showToast('正在规划路径...');
+    let algo = document.getElementById('pathAlgo').value;
+    let start = { x: Math.round(selectedModel.position.x/gridRes), y: Math.round(selectedModel.position.z/gridRes) };
+    let goal = { x: Math.round((selectedModel.position.x+gridSize)/gridRes), y: Math.round(selectedModel.position.z/gridRes) };
+    let startTime = performance.now();
+    let path = algo==='astar'?astarSearch(start, goal):dijkstraSearch(start, goal);
+    let elapsed = performance.now()-startTime;
+    if (path&&path.length>0) {
+        drawPath(path);
+        document.getElementById('pathNodes').textContent = path.length;
+        document.getElementById('pathTime').textContent = elapsed.toFixed(0)+'ms';
+        document.getElementById('pathLen').textContent = (path.length*gridRes).toFixed(1)+'m';
+        showToast('路径规划完成: '+path.length+' 个节点');
+    } else {
+        showToast('未找到可行路径', true);
+    }
+}
+
+function astarSearch(start, goal) {
+    let open=[], closed=new Set(), cameFrom={}, gScore={}, fScore={};
+    let key = function(p) { return p.x+','+p.y; };
+    gScore[key(start)]=0;
+    fScore[key(start)]=heuristic(start, goal);
+    open.push({ node: start, f: fScore[key(start)] });
+    let nodesExpanded=0;
+    while (open.length>0&&nodesExpanded<5000) {
+        open.sort(function(a,b) { return a.f-b.f; });
+        let current = open.shift().node;
+        nodesExpanded++;
+        let ck = key(current);
+        if (current.x===goal.x&&current.y===goal.y) {
+            let path=[current];
+            while (ck in cameFrom) { current=cameFrom[ck]; ck=key(current); path.unshift(current); }
+            return path;
+        }
+        closed.add(ck);
+        let neighbors = getNeighbors(current);
+        for (let n=0;n<neighbors.length;n++) {
+            let nk = key(neighbors[n]);
+            if (closed.has(nk)) continue;
+            let tg = gScore[ck]+1;
+            if (tg<(gScore[nk]||Infinity)) {
+                cameFrom[nk]=current;
+                gScore[nk]=tg;
+                fScore[nk]=tg+heuristic(neighbors[n], goal);
+                open.push({ node: neighbors[n], f: fScore[nk] });
+            }
+        }
+    }
+    return null;
+}
+
+function dijkstraSearch(start, goal) {
+    let open=[], closed=new Set(), cameFrom={}, gScore={};
+    let key = function(p) { return p.x+','+p.y; };
+    gScore[key(start)]=0;
+    open.push({ node: start, g: 0 });
+    let nodesExpanded=0;
+    while (open.length>0&&nodesExpanded<5000) {
+        open.sort(function(a,b) { return a.g-b.g; });
+        let current = open.shift().node;
+        nodesExpanded++;
+        let ck = key(current);
+        if (current.x===goal.x&&current.y===goal.y) {
+            let path=[current];
+            while (ck in cameFrom) { current=cameFrom[ck]; ck=key(current); path.unshift(current); }
+            return path;
+        }
+        closed.add(ck);
+        let neighbors = getNeighbors(current);
+        for (let n=0;n<neighbors.length;n++) {
+            let nk = key(neighbors[n]);
+            if (closed.has(nk)) continue;
+            let tg = gScore[ck]+1;
+            if (tg<(gScore[nk]||Infinity)) {
+                cameFrom[nk]=current;
+                gScore[nk]=tg;
+                open.push({ node: neighbors[n], g: tg });
+            }
+        }
+    }
+    return null;
+}
+
+function heuristic(a, b) {
+    return Math.abs(a.x-b.x)+Math.abs(a.y-b.y);
+}
+
+function getNeighbors(p) {
+    return [{x:p.x+1,y:p.y},{x:p.x-1,y:p.y},{x:p.x,y:p.y+1},{x:p.x,y:p.y-1}];
+}
+
+function drawPath(path) {
+    if (pathLine) scene.remove(pathLine);
+    let points = path.map(function(p) { return new THREE.Vector3(p.x*gridRes, 0.5, p.y*gridRes); });
+    let geo = new THREE.BufferGeometry().setFromPoints(points);
+    pathLine = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x40e0d0, linewidth: 2 }));
+    scene.add(pathLine);
+}
+
+function clearPath() {
+    if (pathLine) { scene.remove(pathLine); pathLine=null; }
+    document.getElementById('pathNodes').textContent='0';
+    document.getElementById('pathTime').textContent='0ms';
+    document.getElementById('pathLen').textContent='0m';
+}
+
+// ==================== 任务导航 ====================
+function addWaypoint() {
+    if (!selectedModel) { showToast('请先选择一个模型', true); return; }
+    waypoints.push({ x: selectedModel.position.x, z: selectedModel.position.z });
+    updateWaypointList();
+    showToast('航点已添加');
+}
+
+function updateWaypointList() {
+    let list = document.getElementById('waypointList');
+    list.innerHTML = waypoints.map(function(w,i) {
+        return '<div class="waypoint-row"><span>航点'+(i+1)+': ('+w.x.toFixed(1)+', '+w.z.toFixed(1)+')</span>'+
+            '<button class="mini-btn danger" onclick="waypoints.splice('+i+',1);updateWaypointList()">X</button></div>';
+    }).join('');
+}
+
+function startAutoNav() {
+    if (!selectedModel) { showToast('请先选择一个模型', true); return; }
+    if (waypoints.length<2) { showToast('请至少添加2个航点', true); return; }
+    activeNavModel = selectedModel;
+    navIndex = 0;
+    navRunning = true;
+    showToast('自动导航已启动');
+}
+
+function clearWaypoints() {
+    waypoints=[];
+    navRunning=false;
+    activeNavModel=null;
+    navIndex=0;
+    updateWaypointList();
+    showToast('航点已清除');
+}
+
+function updateAutoNav() {
+    if (!navRunning||!activeNavModel||navIndex>=waypoints.length) {
+        if (navRunning&&navIndex>=waypoints.length) { navRunning=false; showToast('导航完成'); }
+        return;
+    }
+    let target = waypoints[navIndex];
+    let dx = target.x-activeNavModel.position.x;
+    let dz = target.z-activeNavModel.position.z;
+    let dist = Math.sqrt(dx*dx+dz*dz);
+    if (dist<2) { navIndex++; return; }
+
+    let body = getBodyForModel(activeNavModel);
+    if (!body) return;
+    let desiredX = dx / dist;
+    let desiredZ = dz / dist;
+    let forward = getHorizontalForward(body);
+    let cross = forward.x * desiredZ - forward.z * desiredX;
+    let dot = clamp(forward.x * desiredX + forward.z * desiredZ, -1, 1);
+    let rudder = clamp(cross * 2.0, -1, 1);
+    let throttle = dot > -0.2 ? clamp(dist / 20, 0.25, 1) : 0.25;
+    applyDriveForces(activeNavModel, body, throttle, rudder);
+}
+
+// ==================== 训练场景 ====================
+let enclosureGroup = null;
+
+function createEnclosure() {
+    // 移除旧区域
+    if (enclosureGroup) {
+        scene.remove(enclosureGroup);
+        // 清理训练对象列表中的旧区域
+        trainingObjects = trainingObjects.filter(function(o) { return o !== enclosureGroup; });
+    }
+
+    let sx = parseFloat(document.getElementById('enclosureSizeX').value) || 40;
+    let sz = parseFloat(document.getElementById('enclosureSizeZ').value) || 40;
+    let sy = parseFloat(document.getElementById('enclosureSizeY').value) || 15;
+    let px = parseFloat(document.getElementById('enclosurePosX').value) || 0;
+    let py = parseFloat(document.getElementById('enclosurePosY').value) || 0;
+    let pz = parseFloat(document.getElementById('enclosurePosZ').value) || 0;
+    let alpha = parseFloat(document.getElementById('enclosureAlphaSlider').value) || 0.3;
+
+    enclosureGroup = new THREE.Group();
+    enclosureGroup.name = 'enclosure';
+
+    let wallMat = new THREE.MeshPhongMaterial({
+        color: 0x4488ff, specular: 0x112244, shininess: 30,
+        transparent: true, opacity: alpha, side: THREE.DoubleSide
+    });
+    let edgeMat = new THREE.MeshPhongMaterial({
+        color: 0x40e0d0, specular: 0x224466, shininess: 60,
+        transparent: true, opacity: Math.min(0.8, alpha + 0.2)
+    });
+
+    let halfX = sx / 2, halfY = sy / 2, halfZ = sz / 2;
+    let wallThick = 0.5;
+
+    // 底部
+    let floor = new THREE.Mesh(new THREE.BoxGeometry(sx, wallThick, sz), wallMat);
+    floor.position.set(0, -halfY, 0);
+    enclosureGroup.add(floor);
+
+    // 四面墙
+    let wallN = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, wallThick), wallMat);
+    wallN.position.set(0, 0, -halfZ);
+    enclosureGroup.add(wallN);
+
+    let wallS = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, wallThick), wallMat);
+    wallS.position.set(0, 0, halfZ);
+    enclosureGroup.add(wallS);
+
+    let wallE = new THREE.Mesh(new THREE.BoxGeometry(wallThick, sy, sz), wallMat);
+    wallE.position.set(halfX, 0, 0);
+    enclosureGroup.add(wallE);
+
+    let wallW = new THREE.Mesh(new THREE.BoxGeometry(wallThick, sy, sz), wallMat);
+    wallW.position.set(-halfX, 0, 0);
+    enclosureGroup.add(wallW);
+
+    // 边框发光线条
+    function addEdgeLine(x1, y1, z1, x2, y2, z2) {
+        let points = [new THREE.Vector3(x1, y1, z1), new THREE.Vector3(x2, y2, z2)];
+        let geo = new THREE.BufferGeometry().setFromPoints(points);
+        let line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x40e0d0, transparent: true, opacity: 0.5 }));
+        enclosureGroup.add(line);
+    }
+
+    // 底部边框
+    let h = -halfY;
+    addEdgeLine(-halfX, h, -halfZ, halfX, h, -halfZ);
+    addEdgeLine(-halfX, h, halfZ, halfX, h, halfZ);
+    addEdgeLine(-halfX, h, -halfZ, -halfX, h, halfZ);
+    addEdgeLine(halfX, h, -halfZ, halfX, h, halfZ);
+    // 顶部开放边框（仅显示边框线，不封闭）
+    h = halfY;
+    addEdgeLine(-halfX, h, -halfZ, halfX, h, -halfZ);
+    addEdgeLine(-halfX, h, halfZ, halfX, h, halfZ);
+    addEdgeLine(-halfX, h, -halfZ, -halfX, h, halfZ);
+    addEdgeLine(halfX, h, -halfZ, halfX, h, halfZ);
+    // 垂直线
+    addEdgeLine(-halfX, -halfY, -halfZ, -halfX, halfY, -halfZ);
+    addEdgeLine(halfX, -halfY, -halfZ, halfX, halfY, -halfZ);
+    addEdgeLine(-halfX, -halfY, halfZ, -halfX, halfY, halfZ);
+    addEdgeLine(halfX, -halfY, halfZ, halfX, halfY, halfZ);
+
+    enclosureGroup.position.set(px, py, pz);
+    scene.add(enclosureGroup);
+    trainingObjects.push(enclosureGroup);
+
+    // 添加物理碰撞体（静态墙壁）
+    addEnclosurePhysics(sx, sz, sy, px, py, pz);
+
+    showToast('封闭区域已创建 (' + sx + 'x' + sz + 'x' + sy + 'm)');
+}
+
+function addEnclosurePhysics(sx, sz, sy, px, py, pz) {
+    // 移除旧的封闭区域物理体
+    let enclosureBodies = [];
+    physicsWorld.bodies.forEach(function(b) {
+        if (b.userData && b.userData.isEnclosure) enclosureBodies.push(b);
+    });
+    enclosureBodies.forEach(function(b) { physicsWorld.removeBody(b); });
+
+    let halfX = sx / 2, halfY = sy / 2, halfZ = sz / 2;
+    let wallThick = 0.5;
+
+    function addWall(cx, cy, cz, hx, hy, hz) {
+        let body = new CANNON.Body({ mass: 0, type: CANNON.Body.STATIC });
+        body.addShape(new CANNON.Box(new CANNON.Vec3(hx, hy, hz)));
+        body.position.set(px + cx, py + cy, pz + cz);
+        body.userData = { isEnclosure: true };
+        physicsWorld.addBody(body);
+    }
+
+    // 底部
+    addWall(0, -halfY, 0, halfX, wallThick / 2, halfZ);
+    // 四面墙
+    addWall(0, 0, -halfZ, halfX, halfY, wallThick / 2); // 北
+    addWall(0, 0, halfZ, halfX, halfY, wallThick / 2);  // 南
+    addWall(halfX, 0, 0, wallThick / 2, halfY, halfZ); // 东
+    addWall(-halfX, 0, 0, wallThick / 2, halfY, halfZ); // 西
+}
+
+function updateEnclosure() {
+    if (!enclosureGroup) {
+        createEnclosure();
+        return;
+    }
+    let sx = parseFloat(document.getElementById('enclosureSizeX').value) || 40;
+    let sz = parseFloat(document.getElementById('enclosureSizeZ').value) || 40;
+    let sy = parseFloat(document.getElementById('enclosureSizeY').value) || 15;
+    let px = parseFloat(document.getElementById('enclosurePosX').value) || 0;
+    let py = parseFloat(document.getElementById('enclosurePosY').value) || 0;
+    let pz = parseFloat(document.getElementById('enclosurePosZ').value) || 0;
+    let alpha = parseFloat(document.getElementById('enclosureAlphaSlider').value) || 0.3;
+
+    // 重新创建
+    createEnclosure();
+    showToast('封闭区域已更新');
+}
+
+function removeEnclosure() {
+    if (enclosureGroup) {
+        scene.remove(enclosureGroup);
+        trainingObjects = trainingObjects.filter(function(o) { return o !== enclosureGroup; });
+        enclosureGroup = null;
+    }
+    // 移除物理体
+    let enclosureBodies = [];
+    physicsWorld.bodies.forEach(function(b) {
+        if (b.userData && b.userData.isEnclosure) enclosureBodies.push(b);
+    });
+    enclosureBodies.forEach(function(b) { physicsWorld.removeBody(b); });
+    showToast('封闭区域已移除');
+}
+
+function createDynamicObstacle() {
+    let geo = new THREE.CylinderGeometry(1.5, 1.5, 3, 8);
+    let mat = new THREE.MeshPhongMaterial({ color: 0xff6600 });
+    let obs = new THREE.Mesh(geo, mat);
+    obs.position.set(0, 1.5, -20);
+    obs.castShadow = true;
+    obs.userData = { speed: 0.02, range: 10, dir: 1, isDynamic: true };
+    scene.add(obs);
+    trainingObjects.push(obs);
+    showToast('动态障碍物已创建');
+}
+
+function clearTrainingScene() {
+    trainingObjects.forEach(function(o) { scene.remove(o); });
+    trainingObjects = [];
+    showToast('训练场景已清除');
+}
+
+// ==================== 观察模式 ====================
+function observeMode(mode) {
+    document.querySelectorAll('.observe-btn').forEach(function(b) { b.classList.remove('active'); });
+    event.target.classList.add('active');
+    switch(mode) {
+        case 'orbit': camera.position.set(0,80,220); controls.target.set(0,0,0); break;
+        case 'top': camera.position.set(0,120,0); controls.target.set(0,0,0); break;
+        case 'front': camera.position.set(0,30,80); controls.target.set(0,0,0); break;
+        case 'side': camera.position.set(80,20,0); controls.target.set(0,0,0); break;
+        case 'free': controls.enabled=true; break;
+    }
+    controls.update();
+}
+
+// ==================== Arduino硬件 ====================
+function connectArduinoHW() {
+    let url = document.getElementById('wsUrl').value;
+    try {
+        hwSocket = new WebSocket(url);
+        hwSocket.onopen = function() {
+            hwConnected = true;
+            document.getElementById('hwDot').classList.add('on');
+            document.getElementById('hwStatusText').textContent = '已连接';
+            showToast('Arduino硬件已连接');
+        };
+        hwSocket.onmessage = function(e) {
+            try {
+                let data = JSON.parse(e.data);
+                hwData = data;
+                updateHWDisplay();
+            } catch(ex) {}
+        };
+        hwSocket.onclose = function() {
+            hwConnected = false;
+            document.getElementById('hwDot').classList.remove('on');
+            document.getElementById('hwStatusText').textContent = '已断开';
+        };
+        hwSocket.onerror = function() {
+            showToast('硬件连接失败', true);
+        };
+    } catch(e) {
+        showToast('连接失败: '+e.message, true);
+    }
+}
+
+function sendHW(cmd) {
+    if (hwSocket&&hwConnected) hwSocket.send(cmd);
+    else showToast('硬件未连接', true);
+}
+
+function updateHWDisplay() {
+    if (hwData.temp!==undefined) document.getElementById('hwTemp').textContent = hwData.temp;
+    if (hwData.battery!==undefined) document.getElementById('hwBat').textContent = hwData.battery;
+    if (hwData.speed!==undefined) document.getElementById('hwSpeed').textContent = hwData.speed;
+    if (hwData.depth!==undefined) document.getElementById('hwDepth').textContent = hwData.depth;
+    if (hwData.distance!==undefined) document.getElementById('hwDist').textContent = hwData.distance;
+    if (hwData.rudder!==undefined) document.getElementById('hwRudder').textContent = hwData.rudder;
+}
+
+// ==================== AI助手 ====================
+function sendToAI() {
+    let input = document.getElementById('chatInput');
+    let msg = input.value.trim();
+    if (!msg) return;
+    addChatMessage('user', msg);
+    input.value = '';
+    let responses = {
+        '前进': '已发送前进指令',
+        '后退': '已发送后退指令',
+        '停止': '已发送停止指令',
+        '重置': '正在重置场景...',
+        '帮助': '可用命令: 前进, 后退, 左转, 右转, 停止, 重置, 状态'
+    };
+    let resp = '未知指令，请尝试"帮助"';
+    for (let key in responses) {
+        if (msg.includes(key)) { resp = responses[key]; break; }
+    }
+    if (msg.includes('左转')) resp = '已发送左转指令';
+    if (msg.includes('右转')) resp = '已发送右转指令';
+    if (msg.includes('状态')) resp = '模型数: '+models.length+' | 物理: '+(physicsRunning?'运行':'暂停')+' | 天气: '+weather.type;
+    setTimeout(function() { addChatMessage('ai', resp); }, 500);
+}
+
+function addChatMessage(role, text) {
+    let container = document.getElementById('chatMessages');
+    let div = document.createElement('div');
+    div.style.cssText = 'padding:3px 6px;margin-bottom:3px;border-radius:4px;font-size:0.65rem;'+
+        (role==='user'?'background:rgba(64,224,208,0.15);color:#40e0d0;':'background:rgba(0,0,0,0.3);color:#ccc;');
+    div.textContent = (role==='user'?'你: ':'AI: ')+text;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+}
+
+// ==================== 控制通信 ====================
+function sendControl(dir, speed) {
+    let data = { direction: dir };
+    if (speed!==undefined) data.speed = speed;
+    if (socket) socket.emit('control', data);
+}
+
+// ==================== 时间更新 ====================
+function updateTime() {
+    let now = new Date();
+    let timeStr = now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0')+':'+now.getSeconds().toString().padStart(2,'0');
+    document.getElementById('timeDisplay').textContent = timeStr;
+}
+
+// ==================== Toast ====================
+function showToast(msg, isError) {
+    let toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.className = isError?'error':'';
+    toast.classList.add('show');
+    clearTimeout(toast._timeout);
+    toast._timeout = setTimeout(function() { toast.classList.remove('show'); }, 2000);
+}
+
+// ==================== 动画循环 ====================
+function animate() {
+    requestAnimationFrame(animate);
+    frameCount++;
+    let now = performance.now();
+    if (now-lastTime>=1000) {
+        document.getElementById('fpsVal').textContent = frameCount;
+        frameCount=0;
+        lastTime=now;
+        // 更新传感器数据
+        if (selectedModel) {
+            let spd = 0;
+            let idx = models.indexOf(selectedModel);
+            if (idx>=0&&physBodies[idx]) {
+                let v = physBodies[idx].velocity;
+                spd = Math.sqrt(v.x*v.x+v.z*v.z).toFixed(1);
+            }
+            document.getElementById('speedData').textContent = spd;
+            document.getElementById('gpsData').textContent = selectedModel.position.x.toFixed(1)+','+selectedModel.position.z.toFixed(1);
+            document.getElementById('depthData').textContent = (-selectedModel.position.y).toFixed(1)+'m';
+            document.getElementById('batteryData').textContent = (85+Math.random()*10).toFixed(0)+'%';
+            document.getElementById('tempData').textContent = (22+Math.random()*3).toFixed(1)+'°';
+            document.getElementById('humidityData').textContent = (60+Math.random()*15).toFixed(0)+'%';
+        }
+        // 自动时间流逝
+        if (!document.getElementById('timeSlider').matches(':active')) {
+            simTimeMinutes = (simTimeMinutes + simTimeSpeed) % 1440;
+            document.getElementById('timeSlider').value = simTimeMinutes;
+            let hours = Math.floor(simTimeMinutes/60);
+            let mins = simTimeMinutes%60;
+            document.getElementById('timeLabel').textContent = (hours<10?'0'+hours:hours)+':'+(mins<10?'0'+mins:mins);
+            document.getElementById('currentTimeDisplay').textContent = (hours<10?'0'+hours:hours)+':'+(mins<10?'0'+mins:mins);
+            applyTimeEnvironment();
+        }
+        // 更新性能显示
+        document.getElementById('perfDisplay').textContent = '模型:'+models.length+' | 物理体:'+physBodies.length;
+    }
+    // 更新物理
+    updatePhysics();
+    // 高开销视觉效果分帧更新，降低主线程压力，保持操纵和渲染流畅。
+    perfFrameMod = (perfFrameMod + 1) % 6;
+    if (perfFrameMod % 2 === 0) updateOceanGeometry();
+    if (perfFrameMod % 2 === 0) updateRainEffect();
+    if (perfFrameMod % 3 === 0) updateUnderwaterParticles();
+    updateWeatherTransition();
+    // 更新动态障碍物
+    trainingObjects.forEach(function(o) {
+        if (o.userData&&o.userData.isDynamic) {
+            o.position.x += o.userData.speed*o.userData.dir;
+            if (Math.abs(o.position.x)>o.userData.range) o.userData.dir*=-1;
+        }
+    });
+    // 更新自动导航
+    updateAutoNav();
+    // 渲染
+    controls.update();
+    renderer.render(scene, camera);
+    
+    // 渲染左上角坐标轴指示器
+    let axesSize = 110;
+    renderer.setViewport(10, 10, axesSize, axesSize);
+    renderer.setScissor(10, 10, axesSize, axesSize);
+    renderer.setScissorTest(true);
+    // 更新模型坐标轴方向（位置固定在原点，仅旋转匹配模型朝向）
+    if (selectedModel) {
+        modelAxesHelper.visible = true;
+        modelAxesHelper.quaternion.copy(selectedModel.quaternion);
+        document.getElementById('axesModelLabel').style.display = 'block';
+    } else {
+        modelAxesHelper.visible = false;
+        document.getElementById('axesModelLabel').style.display = 'none';
+    }
+    renderer.render(axesScene, axesCamera);
+    renderer.setScissorTest(false);
+    // 恢复主视口
+    let w = renderer.domElement.clientWidth;
+    let h = renderer.domElement.clientHeight;
+    renderer.setViewport(0, 0, w, h);
+    
+    // 更新底部信息
+    if (selectedModel) updateModelInfoDisplay();
+}
+
+
+
+// ==================== 继续修改：真实物理/手势/重置/UI覆盖补丁 ====================
+let gestureDepthBaseline = null;
+let gestureDepthSmooth = null;
+let gestureLastSeen = 0;
+let gestureRafId = null;
+let gestureFrameBusy = false;
+let gestureLastFrameSent = 0;
+// YOYO 手势控制增强：轨迹、置信门控、滞回和平滑滤波，避免单节点抖动误触。
+let yoyoPalmTrail = [];
+let yoyoStableFrames = 0;
+let yoyoLastCommand = { throttle: 0, rudder: 0 };
+let yoyoLastDecision = 'idle';
+let yoyoNoHandFrames = 0;
+const YOYO_TRAIL_MAX = 18;
+const YOYO_OPEN_FINGER_MIN = 4;
+const YOYO_DEAD_ZONE = 0.12;
+const YOYO_RELEASE_ZONE = 0.07;
+const YOYO_SMOOTH_ALPHA = 0.24;
+let perfFrameMod = 0;
+const HAND_CONNECTIONS_LOCAL = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+
+function computeGeometryVolume(geometry) {
+    if (!geometry || !geometry.attributes || !geometry.attributes.position) return 0;
+    let pos = geometry.attributes.position;
+    let idx = geometry.index;
+    let ax, ay, az, bx, by, bz, cx, cy, cz, volume = 0;
+    function tri(i0, i1, i2) {
+        ax = pos.getX(i0); ay = pos.getY(i0); az = pos.getZ(i0);
+        bx = pos.getX(i1); by = pos.getY(i1); bz = pos.getZ(i1);
+        cx = pos.getX(i2); cy = pos.getY(i2); cz = pos.getZ(i2);
+        volume += (ax * (by*cz - bz*cy) + bx * (cy*az - cz*ay) + cx * (ay*bz - az*by)) / 6.0;
+    }
+    if (idx) {
+        for (let i=0; i<idx.count; i+=3) tri(idx.getX(i), idx.getX(i+1), idx.getX(i+2));
+    } else {
+        for (let i=0; i<pos.count; i+=3) tri(i, i+1, i+2);
+    }
+    return Math.abs(volume);
+}
+
+function estimatePhysicalVolume(mesh) {
+    if (!mesh) return 1;
+    mesh.updateMatrixWorld(true);
+    let closedVolume = 0;
+    mesh.traverse(function(child) {
+        if (!child.isMesh || !child.geometry) return;
+        let localVol = computeGeometryVolume(child.geometry);
+        if (localVol > 1e-9) {
+            let det = Math.abs(child.matrixWorld.determinant ? child.matrixWorld.determinant() : 1);
+            closedVolume += localVol * det;
+        }
+    });
+    let size = getModelWorldSize(mesh);
+    let boxVolume = Math.max(size.x * size.y * size.z, 0.000001);
+    if (closedVolume > 0.000001 && closedVolume < boxVolume * 1.25) return closedVolume;
+    let coefficient = mesh.userData && mesh.userData.fileName === '小船' ? 0.42 : 0.55;
+    return Math.max(boxVolume * coefficient, 0.000001);
+}
+
+updateHydroData = function(mesh, explicitVolume) {
+    if (!mesh) return { x: 1, y: 1, z: 1, volume: 1 };
+    let size = getModelWorldSize(mesh);
+    let boxVolume = Math.max(size.x * size.y * size.z, 0.000001);
+    let estimated = estimatePhysicalVolume(mesh);
+    let manual = !!(mesh.userData && mesh.userData.manualVolume);
+    let volume = manual && explicitVolume !== undefined ? Math.max(parseFloat(explicitVolume) || estimated, 0.000001) : estimated;
+    // 排开水体积不能大于外包盒体积；真实模型若有空舱，需要由密度/体积输入体现。
+    volume = clamp(volume, 0.000001, boxVolume * 0.98);
+    mesh.userData.hullSize = { x: size.x, y: size.y, z: size.z };
+    mesh.userData.boxVolume = boxVolume;
+    mesh.userData.volume = volume;
+    mesh.userData.displacementVolume = volume;
+    mesh.userData.waterplaneArea = Math.max(size.x * size.z * 0.82, 0.001);
+    return { x: size.x, y: size.y, z: size.z, volume: volume };
+};
+
+positionBodyAtPhysicalDraft = function(mesh, body) {
+    if (!mesh || !body) return;
+    let hull = updateHydroData(mesh, mesh.userData.volume);
+    let density = mesh.userData.density || STEEL_DENSITY;
+    let waterDensity = Math.max(physicsParams.waterDensity, 1);
+    let targetSubmerged = clamp(density / waterDensity, 0.03, 1.0);
+    let waterH = getWaveHeight(body.position.x, body.position.z);
+    body.position.y = waterH + hull.y * (0.5 - targetSubmerged);
+    body.velocity.set(0,0,0);
+    body.angularVelocity.set(0,0,0);
+    body.wakeUp();
+    mesh.position.copy(body.position);
+    mesh.quaternion.copy(body.quaternion);
+};
+
+applyBuoyancy = function(mesh, body) {
+    if (!body || body.mass <= 0 || !mesh) return;
+    let hull = updateHydroData(mesh, mesh.userData.volume);
+    let volume = Math.max(mesh.userData.displacementVolume || hull.volume, 0.000001);
+    let rho = physicsParams.waterDensity;
+    let g = Math.abs(physicsParams.gravity);
+    let Cd = physicsParams.dragCoeff;
+    let samples = [
+        {x:0,z:0,w:0.28},{x:0,z:hull.z*0.38,w:0.12},{x:0,z:-hull.z*0.38,w:0.12},
+        {x:hull.x*0.38,z:0,w:0.12},{x:-hull.x*0.38,z:0,w:0.12},
+        {x:hull.x*0.28,z:hull.z*0.28,w:0.06},{x:-hull.x*0.28,z:hull.z*0.28,w:0.06},
+        {x:hull.x*0.28,z:-hull.z*0.28,w:0.06},{x:-hull.x*0.28,z:-hull.z*0.28,w:0.06}
+    ];
+    let submergedWeighted = 0, totalWeight = 0;
+    for (let i=0; i<samples.length; i++) {
+        let s = samples[i];
+        let worldOffset = body.quaternion.vmult(new CANNON.Vec3(s.x, 0, s.z));
+        let samplePos = body.position.vadd(worldOffset);
+        let waterH = getWaveHeight(samplePos.x, samplePos.z);
+        let bottomY = samplePos.y - hull.y * 0.5;
+        let submerged = clamp((waterH - bottomY) / Math.max(hull.y, 0.001), 0, 1);
+        submergedWeighted += submerged * s.w; totalWeight += s.w;
+        if (submerged <= 0) continue;
+        let displaced = volume * s.w * submerged;
+        let lift = rho * g * displaced;
+        let applyPoint = new CANNON.Vec3(samplePos.x, bottomY + submerged*hull.y*0.45, samplePos.z);
+        body.applyForce(new CANNON.Vec3(0, lift, 0), applyPoint);
+    }
+    let sub = totalWeight > 0 ? clamp(submergedWeighted/totalWeight, 0, 1) : 0;
+    mesh.userData.submergedRatio = sub;
+    mesh.userData.buoyancyN = rho * g * volume * sub;
+    mesh.userData.weightN = body.mass * g;
+    if (sub > 0) {
+        let windDir = waveParams && waveParams[0] ? THREE.MathUtils.degToRad(waveParams[0].direction || 0) : 0;
+        let current = { x: Math.cos(windDir) * (weather.windSpeed || 0) * 0.035, z: Math.sin(windDir) * (weather.windSpeed || 0) * 0.035 };
+        let rvx = body.velocity.x - current.x, rvy = body.velocity.y, rvz = body.velocity.z - current.z;
+        let maxHydroForce = body.mass * g * 7.5;
+        let areaX = Math.max(hull.y * hull.z * sub * 0.85, 0.001);
+        let areaZ = Math.max(hull.x * hull.y * sub * 0.85, 0.001);
+        let areaY = Math.max(hull.x * hull.z * sub, 0.001);
+        let fx = -0.5*rho*Cd*areaX*rvx*Math.abs(rvx);
+        let fy = -0.5*rho*1.6*areaY*rvy*Math.abs(rvy);
+        let fz = -0.5*rho*Cd*areaZ*rvz*Math.abs(rvz);
+        body.applyForce(new CANNON.Vec3(limitScalar(fx,maxHydroForce), limitScalar(fy,maxHydroForce), limitScalar(fz,maxHydroForce)), body.position);
+        let slope = getWaveSlope(body.position.x, body.position.z);
+        let waveForce = rho*g*volume*sub*0.045;
+        body.applyForce(new CANNON.Vec3(limitScalar(waveForce*slope.x, body.mass*g*0.45), 0, limitScalar(waveForce*slope.z, body.mass*g*0.45)), body.position);
+        let q = body.quaternion;
+        let right = q.vmult(new CANNON.Vec3(1,0,0)); right.y = 0;
+        let len = Math.sqrt(right.x*right.x + right.z*right.z) || 1; right.x/=len; right.z/=len;
+        let sideSlip = body.velocity.x*right.x + body.velocity.z*right.z;
+        body.applyForce(new CANNON.Vec3(right.x*(-sideSlip*body.mass*(0.8+2.8*sub)),0,right.z*(-sideSlip*body.mass*(0.8+2.8*sub))), body.position);
+        let av = body.angularVelocity;
+        body.torque.x -= av.x * Math.max(body.inertia.x,1) * (1.4 + 5.0*sub);
+        body.torque.y -= av.y * Math.max(body.inertia.y,1) * (0.5 + 2.4*sub);
+        body.torque.z -= av.z * Math.max(body.inertia.z,1) * (1.4 + 5.0*sub);
+    } else {
+        let air = 0.02 * body.mass;
+        body.applyForce(new CANNON.Vec3(-body.velocity.x*air, -body.velocity.y*air*0.2, -body.velocity.z*air), body.position);
+    }
+};
+
+function clearGestureCanvas() {
+    let canvas = document.getElementById('gestureCanvas');
+    if (!canvas) return;
+    let ctx = canvas.getContext('2d');
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+}
+
+function yoyoDist(a, b) {
+    if (!a || !b) return 0;
+    let dx = a.x - b.x, dy = a.y - b.y, dz = (a.z || 0) - (b.z || 0);
+    return Math.sqrt(dx*dx + dy*dy + dz*dz);
+}
+
+function yoyoClampUnit(v) { return clamp(v, -1, 1); }
+
+function yoyoApplyDeadband(value, dead, release) {
+    let lastActive = Math.abs(value) >= dead;
+    if (!lastActive && Math.abs(value) < release) return 0;
+    if (Math.abs(value) < dead) return 0;
+    let sign = value >= 0 ? 1 : -1;
+    return sign * clamp((Math.abs(value) - dead) / Math.max(1 - dead, 0.0001), 0, 1);
+}
+
+function countExtendedFingers(lm) {
+    if (!lm || lm.length < 21) return 0;
+    // YOYO 逻辑：使用指尖到手腕距离、PIP 关节方向与掌宽归一化，兼容左右手和一定旋转角度。
+    let wrist = lm[0], indexBase = lm[5], pinkyBase = lm[17];
+    let palmWidth = Math.max(yoyoDist(indexBase, pinkyBase), 0.035);
+    let fingers = 0;
+    [[8,6,5],[12,10,9],[16,14,13],[20,18,17]].forEach(function(pair){
+        let tip = lm[pair[0]], pip = lm[pair[1]], base = lm[pair[2]];
+        let extendedByY = tip.y < pip.y - palmWidth * 0.10;
+        let extendedByLen = yoyoDist(tip, wrist) > yoyoDist(pip, wrist) + palmWidth * 0.18 && yoyoDist(tip, base) > palmWidth * 0.55;
+        if (extendedByY || extendedByLen) fingers++;
+    });
+    let thumbTip = lm[4], thumbIp = lm[3], thumbMcp = lm[2];
+    let handMirror = indexBase.x < pinkyBase.x ? 1 : -1;
+    let thumbSide = (thumbTip.x - thumbIp.x) * handMirror > palmWidth * 0.18;
+    let thumbLen = yoyoDist(thumbTip, wrist) > yoyoDist(thumbMcp, wrist) + palmWidth * 0.22;
+    if (thumbSide || thumbLen) fingers++;
+    return fingers;
+}
+
+function getPalmControl(lm) {
+    // YOYO 控制源：掌心坐标 + 掌框尺度 + 轨迹速度。比单个指尖节点更稳定。
+    let ids = [0,5,9,13,17];
+    let cx = 0, cy = 0, cz = 0;
+    ids.forEach(function(i){ cx += lm[i].x; cy += lm[i].y; cz += lm[i].z || 0; });
+    cx /= ids.length; cy /= ids.length; cz /= ids.length;
+    let minX=1, maxX=0, minY=1, maxY=0;
+    [0,4,8,12,16,20].forEach(function(i){
+        let p = lm[i]; minX=Math.min(minX,p.x); maxX=Math.max(maxX,p.x); minY=Math.min(minY,p.y); maxY=Math.max(maxY,p.y);
+    });
+    let size = Math.max(maxX-minX, maxY-minY, 0.001);
+    let now = performance.now();
+    yoyoPalmTrail.push({x:cx, y:cy, z:cz, size:size, t:now});
+    if (yoyoPalmTrail.length > YOYO_TRAIL_MAX) yoyoPalmTrail.shift();
+    let oldest = yoyoPalmTrail[0] || {x:cx,y:cy,size:size,t:now};
+    let dt = Math.max((now - oldest.t) / 1000, 0.001);
+    return { x: cx, y: cy, z: cz, size: size, vx: (cx-oldest.x)/dt, vy: (cy-oldest.y)/dt, vsize: (size-oldest.size)/dt };
+}
+
+function yoyoResetGestureInput(reasonText) {
+    driveKeys['w']=driveKeys['s']=driveKeys['a']=driveKeys['d']=false;
+    gestureDriveInput = {x:0,z:0};
+    yoyoLastCommand = { throttle: 0, rudder: 0 };
+    yoyoLastDecision = 'idle';
+    if (reasonText) {
+        let text = document.getElementById('gestureText');
+        if (text) text.textContent = reasonText;
+    }
+}
+
+function drawHandLandmarks(results) {
+    let canvas = document.getElementById('gestureCanvas');
+    let video = document.getElementById('gestureVideoEl');
+    if (!canvas || !video) return;
+    let w = video.videoWidth || 320, h = video.videoHeight || 240;
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    let ctx = canvas.getContext('2d');
+    ctx.clearRect(0,0,w,h);
+    if (!results || !results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return;
+    let lm = results.multiHandLandmarks[0];
+    ctx.lineWidth = Math.max(2, w/220);
+    ctx.strokeStyle = 'rgba(100,210,255,0.92)';
+    ctx.fillStyle = 'rgba(64,224,208,0.95)';
+    HAND_CONNECTIONS_LOCAL.forEach(function(pair){
+        let a = lm[pair[0]], b = lm[pair[1]];
+        ctx.beginPath(); ctx.moveTo(a.x*w, a.y*h); ctx.lineTo(b.x*w, b.y*h); ctx.stroke();
+    });
+    [4,8,12,16,20].forEach(function(i) {
+        let p = lm[i]; ctx.beginPath(); ctx.arc(p.x*w, p.y*h, Math.max(4, w/90), 0, Math.PI*2); ctx.fill();
+    });
+    // 掌心轨迹：对应 YOYO 页面中的“手势骨架 / 掌心轨迹”思路。
+    if (yoyoPalmTrail.length > 1) {
+        ctx.beginPath();
+        yoyoPalmTrail.forEach(function(p, idx){
+            let x = p.x*w, y = p.y*h;
+            if (idx === 0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+        });
+        ctx.strokeStyle = 'rgba(255,255,255,0.72)';
+        ctx.lineWidth = Math.max(1.5, w/280);
+        ctx.stroke();
+    }
+    let ids = [0,5,9,13,17], cx = 0, cy = 0;
+    ids.forEach(function(i){ cx += lm[i].x; cy += lm[i].y; });
+    cx /= ids.length; cy /= ids.length;
+    let minX=1,maxX=0,minY=1,maxY=0;
+    [0,4,8,12,16,20].forEach(function(i){ let p = lm[i]; minX=Math.min(minX,p.x); maxX=Math.max(maxX,p.x); minY=Math.min(minY,p.y); maxY=Math.max(maxY,p.y); });
+    let palmSize = Math.max(maxX-minX, maxY-minY, 0.001);
+    ctx.strokeStyle = 'rgba(255,214,10,0.9)';
+    ctx.beginPath(); ctx.arc(cx*w, cy*h, Math.max(10, palmSize*w*0.25), 0, Math.PI*2); ctx.stroke();
+}
+
+
+
+switchControlMode = function(mode) {
+    controlMode = mode;
+    document.getElementById('ctrlKeyboard').classList.toggle('active', mode==='keyboard');
+    document.getElementById('ctrlGesture').classList.toggle('active', mode==='gesture');
+    if (mode === 'gesture') {
+        if (!driveModel) {
+            if (selectedModel) selectDriveModel(String(models.indexOf(selectedModel)));
+            else if (models.length > 0) selectDriveModel('0');
+        }
+        if (!manualDriveActive && driveModel) toggleManualDrive();
+        document.getElementById('gestureStatus').style.display = 'flex';
+        if (!gestureActive) startGesture();
+        showToast('YOYO手势操控已开启：掌心靠近/远离控制前后，左右轨迹控制转向');
+    } else {
+        document.getElementById('gestureStatus').style.display = 'none';
+        if (gestureActive) stopGesture();
+        driveKeys = {};
+        showToast('已切换到键盘操控：W/S推进，A/D舵力转向');
+    }
+};
+
+startGesture = function() {
+    if (gestureActive && gestureCamera) return;
+    gestureActive = true;
+    gestureDepthBaseline = null;
+    gestureDepthSmooth = null;
+    yoyoPalmTrail = []; yoyoStableFrames = 0; yoyoNoHandFrames = 0; yoyoLastCommand = {throttle:0,rudder:0};
+    let dot = document.getElementById('gestureDot'), text = document.getElementById('gestureText');
+    if (dot) dot.className = 'gesture-dot on';
+    if (text) text.textContent = 'YOYO手势已激活 · 张开4/5指后用掌心轨迹控制';
+    let status = document.getElementById('gestureStatus'); if (status) status.style.display = 'flex';
+    let preview = document.getElementById('gestureVideoPreview'); if (preview) preview.style.display = 'block';
+    initGestureCamera();
+};
+
+stopGesture = function() {
+    gestureActive = false;
+    let dot = document.getElementById('gestureDot'), text = document.getElementById('gestureText');
+    if (dot) dot.className = 'gesture-dot off';
+    if (text) text.textContent = '手势未激活';
+    let preview = document.getElementById('gestureVideoPreview'); if (preview) preview.style.display = 'none';
+    if (gestureCamera && gestureCamera.stop) gestureCamera.stop();
+    if (gestureRafId) cancelAnimationFrame(gestureRafId);
+    gestureCamera = null; gestureRafId = null;
+    yoyoPalmTrail = []; yoyoNoHandFrames = 0; yoyoStableFrames = 0;
+    driveKeys['w']=driveKeys['s']=driveKeys['a']=driveKeys['d']=false;
+    gestureDriveInput = {x:0,z:0};
+    clearGestureCanvas();
+};
+
+initGestureCamera = function() {
+    let video = document.getElementById('gestureVideoEl');
+    if (!video) return;
+    if (!window.Hands) { showToast('手势识别库仍在加载，请稍后再试', true); return; }
+    try {
+        if (!hands) {
+            hands = new Hands({ locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/' + f; } });
+            // 低复杂度 + 低分辨率 + 帧率节流，保持网页流畅。
+            hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.62, minTrackingConfidence: 0.62 });
+            hands.onResults(onHandResults);
+        }
+        async function sendGestureFrame() {
+            let now = performance.now();
+            if (!gestureActive || gestureFrameBusy || video.readyState < 2 || now - gestureLastFrameSent < 58) return;
+            gestureFrameBusy = true;
+            gestureLastFrameSent = now;
+            try { await hands.send({image: video}); }
+            catch(e) { console.warn('gesture frame skipped:', e); }
+            finally { gestureFrameBusy = false; }
+        }
+        if (window.Camera) {
+            if (gestureCamera && gestureCamera.stop) gestureCamera.stop();
+            gestureCamera = new Camera(video, { onFrame: sendGestureFrame, width: 416, height: 312 });
+            gestureCamera.start();
+        } else if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            navigator.mediaDevices.getUserMedia({video:{width:416,height:312, frameRate:{ideal:18,max:24}}, audio:false}).then(function(stream){
+                video.srcObject = stream; video.play();
+                let loop = async function(){ if (!gestureActive) return; await sendGestureFrame(); gestureRafId = requestAnimationFrame(loop); };
+                loop();
+                gestureCamera = { stop:function(){ stream.getTracks().forEach(function(t){t.stop();}); if (gestureRafId) cancelAnimationFrame(gestureRafId); } };
+            }).catch(function(e){ showToast('摄像头打开失败: '+e.message, true); });
+        } else {
+            showToast('当前浏览器不支持摄像头手势识别', true);
+        }
+        showToast('YOYO手势窗口已打开：掌心轨迹控制，握拳/少于4指立即停车');
+    } catch(e) {
+        gestureActive = false;
+        showToast('手势初始化失败: ' + e.message, true);
+    }
+};
+
+
+onHandResults = function(results) {
+    if (!gestureActive) return;
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        yoyoNoHandFrames = 0;
+    } else {
+        yoyoNoHandFrames++;
+    }
+    drawHandLandmarks(results);
+    if (!gestureActive || controlMode !== 'gesture' || !manualDriveActive || !driveModelBody) return;
+
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        let lm = results.multiHandLandmarks[0];
+        gestureLastSeen = performance.now();
+        let fingerCount = countExtendedFingers(lm);
+        let text = document.getElementById('gestureText');
+
+        if (fingerCount < YOYO_OPEN_FINGER_MIN) {
+            gestureDepthBaseline = null;
+            gestureDepthSmooth = null;
+            yoyoPalmTrail = [];
+            yoyoStableFrames = 0;
+            yoyoResetGestureInput('YOYO待机：张开4/5个指头开始 · 当前:' + fingerCount);
+            return;
+        }
+
+        yoyoStableFrames = Math.min(yoyoStableFrames + 1, 6);
+        let palm = getPalmControl(lm);
+        if (gestureDepthBaseline === null) gestureDepthBaseline = palm.size;
+        // 慢速自校准：静止时逐步跟随，动作时保持基线，避免前后动作被“吃掉”。
+        let motion = Math.abs(palm.vx) + Math.abs(palm.vy) + Math.abs(palm.vsize) * 2.2;
+        let baselineAlpha = motion < 0.28 ? 0.018 : 0.004;
+        gestureDepthBaseline = gestureDepthBaseline * (1 - baselineAlpha) + palm.size * baselineAlpha;
+
+        let depthRaw = (palm.size - gestureDepthBaseline) * 7.2 + palm.vsize * 0.18;
+        let lateralRaw = (palm.x - 0.5) * 2.65 + palm.vx * 0.10;
+        let throttleTarget = yoyoApplyDeadband(yoyoClampUnit(depthRaw), YOYO_DEAD_ZONE, YOYO_RELEASE_ZONE);
+        let rudderTarget = yoyoApplyDeadband(yoyoClampUnit(lateralRaw), YOYO_DEAD_ZONE, YOYO_RELEASE_ZONE);
+
+        // 前几帧只校准不输出，减少摄像头刚打开时的误动作。
+        if (yoyoStableFrames < 3) {
+            driveKeys['w']=driveKeys['s']=driveKeys['a']=driveKeys['d']=false;
+            gestureDriveInput = {x:0,z:0};
+            if (text) text.textContent = 'YOYO校准中 · 保持手掌张开';
+            return;
+        }
+
+        yoyoLastCommand.throttle = yoyoLastCommand.throttle * (1 - YOYO_SMOOTH_ALPHA) + throttleTarget * YOYO_SMOOTH_ALPHA;
+        yoyoLastCommand.rudder = yoyoLastCommand.rudder * (1 - YOYO_SMOOTH_ALPHA) + rudderTarget * YOYO_SMOOTH_ALPHA;
+        let throttle = Math.abs(yoyoLastCommand.throttle) > 0.10 ? yoyoLastCommand.throttle : 0;
+        let rudder = Math.abs(yoyoLastCommand.rudder) > 0.10 ? yoyoLastCommand.rudder : 0;
+
+        driveKeys['w'] = throttle > 0.14;
+        driveKeys['s'] = throttle < -0.14;
+        driveKeys['a'] = rudder < -0.14;
+        driveKeys['d'] = rudder > 0.14;
+        gestureDriveInput = { x: rudder, z: -throttle };
+        yoyoLastDecision = (driveKeys['w']?'前进 ':driveKeys['s']?'后退 ':'') + (driveKeys['a']?'左转':driveKeys['d']?'右转':'') || '悬停';
+        if (text) text.textContent = 'YOYO ' + yoyoLastDecision + ' · 指头:' + fingerCount + ' 前后:' + throttle.toFixed(2) + ' 左右:' + rudder.toFixed(2);
+    } else {
+        if (performance.now() - gestureLastSeen > 180 || yoyoNoHandFrames > 3) {
+            gestureDepthBaseline = null;
+            gestureDepthSmooth = null;
+            yoyoPalmTrail = [];
+            yoyoStableFrames = 0;
+            yoyoResetGestureInput('YOYO等待手掌/指头');
+        }
+    }
+};
+
+
+
+applyVolumeFromInput = function(val) {
+    if (!selectedModel) { showToast('请先选择一个模型', true); return; }
+    let targetVolume = parseFloat(val);
+    if (isNaN(targetVolume) || targetVolume <= 0) targetVolume = selectedModel.userData.volume || 1;
+    targetVolume = clamp(targetVolume, 0.000001, 1000000000);
+    let current = Math.max(selectedModel.userData.volume || estimatePhysicalVolume(selectedModel), 0.000001);
+    let scaleFactor = Math.cbrt(targetVolume / current);
+    selectedModel.scale.multiplyScalar(scaleFactor);
+    selectedModel.userData.manualVolume = true;
+    updateHydroData(selectedModel, targetVolume);
+    selectedModel.userData.volume = targetVolume;
+    rebuildPhysicsBody(selectedModel, true);
+    document.getElementById('volumeInput').value = targetVolume.toFixed(3);
+    updateModelInfoDisplay();
+    showToast('模型体积已设置为 '+targetVolume.toFixed(3)+' m³；物理体、质量和排水体积已同步');
+};
+
+updateModelDensity = function(value) {
+    if (!selectedModel) { showToast('请先选择模型', true); return; }
+    let density = parseFloat(value);
+    if (isNaN(density)) density = DEFAULT_MODEL_DENSITY;
+    density = clamp(density, MODEL_DENSITY_MIN, MODEL_DENSITY_MAX);
+    selectedModel.userData.density = density;
+    updateHydroData(selectedModel, selectedModel.userData.volume);
+    let idx = models.indexOf(selectedModel);
+    if (idx >= 0 && physBodies[idx]) {
+        physBodies[idx].mass = Math.max(density * (selectedModel.userData.volume || 1), 0.001);
+        physBodies[idx].updateMassProperties();
+        physBodies[idx].wakeUp();
+    }
+    document.getElementById('modelDensityInput').value = density;
+    document.getElementById('densityModelVal').textContent = density;
+    updateModelInfoDisplay();
+    showToast('密度已更新为 '+density+' kg/m³，浮态将按排水体积和重量实时平衡');
+};
+
+updateModelInfoDisplay = function() {
+    let hydroBox = document.getElementById('hydroReadout');
+    if (!selectedModel) {
+        document.getElementById('modelInfoDisplay').textContent = '未选中模型';
+        if (hydroBox) hydroBox.textContent = '浮态：请选择模型';
+        return;
+    }
+    updateHydroData(selectedModel, selectedModel.userData.volume);
+    let body = getBodyForModel(selectedModel);
+    let volume = selectedModel.userData.volume || 0;
+    let density = selectedModel.userData.density || STEEL_DENSITY;
+    let ratio = density / Math.max(physicsParams.waterDensity, 1);
+    let sub = selectedModel.userData.submergedRatio !== undefined ? selectedModel.userData.submergedRatio : clamp(ratio,0,1);
+    let state = ratio < 1 ? ('漂浮平衡 · 理论浸没 '+(ratio*100).toFixed(0)+'%') : '密度大于水 · 物理上会继续下沉直到触底/外力平衡';
+    let mass = body ? body.mass : density * volume;
+    let buoy = selectedModel.userData.buoyancyN || 0, weight = selectedModel.userData.weightN || mass*Math.abs(physicsParams.gravity);
+    document.getElementById('modelInfoDisplay').textContent = selectedModel.userData.fileName+' | 体积:'+volume.toFixed(2)+'m³ | 质量:'+mass.toFixed(1)+'kg | 密度:'+density+'kg/m³ | 浸没:'+ (sub*100).toFixed(0)+'%';
+    if (hydroBox) hydroBox.textContent = '浮态：'+state+'｜实时浮力 '+buoy.toFixed(0)+' N｜重力 '+weight.toFixed(0)+' N｜浪/阻力随速度与浸没比例连续计算';
+};
+
+function resetDriveUi() {
+    manualDriveActive = false; controlMode = 'keyboard'; driveKeys = {}; driveVelocity.set(0,0,0); driveAngularVelocity = 0;
+    let btn = document.getElementById('btnDrive'); if (btn) { btn.textContent = '启动驾驶'; btn.classList.remove('active'); }
+    let ck = document.getElementById('ctrlKeyboard'), cg = document.getElementById('ctrlGesture');
+    if (ck) ck.classList.add('active'); if (cg) cg.classList.remove('active');
+    let gs = document.getElementById('gestureStatus'); if (gs) gs.style.display = 'none';
+}
+
+resetScene = function() {
+    if (gestureActive) stopGesture();
+    resetDriveUi();
+    navRunning = false; navIndex = 0; activeNavModel = null;
+    if (pathLine) { scene.remove(pathLine); if (pathLine.geometry) pathLine.geometry.dispose(); if (pathLine.material) pathLine.material.dispose(); pathLine = null; }
+    if (typeof clearTrainingScene === 'function') clearTrainingScene();
+    if (typeof removeEnclosure === 'function') removeEnclosure();
+    models.forEach(function(m,i){ scene.remove(m); disposeModel(m); if (physBodies[i]) physicsWorld.removeBody(physBodies[i]); });
+    models = []; physBodies = []; selectedModel = null; driveModel = null; driveModelBody = null; waypoints = [];
+    let wl = document.getElementById('waypointList'); if (wl) wl.innerHTML = '';
+    ['pathNodes','pathTime','pathLen'].forEach(function(id,idx){ let el=document.getElementById(id); if (el) el.textContent = idx===0?'0':(idx===1?'0ms':'0m'); });
+    simTimeMinutes = 720; simTimeSpeed = 2; weatherTimer = 0;
+    let ts = document.getElementById('timeSlider'); if (ts) ts.value = 720;
+    let tss = document.getElementById('timeSpeedSlider'); if (tss) tss.value = 2;
+    let spv = document.getElementById('timeSpeedVal'); if (spv) spv.textContent = '2.0x';
+    resetWaves(); initWeather(); updateSimTime(720); setViewMode('above');
+    if (rainParticles) rainParticles.visible = false;
+    physicsRunning = true; lastPhysicsTime = performance.now();
+    let bp = document.getElementById('btnPhysics'); if (bp) { bp.textContent='暂停物理'; bp.style.background=''; }
+    camera.position.set(0,80,220); controls.target.set(0,0,0); controls.update();
+    createDefaultBoat();
+    updateModelList(); updateDriveModelSelect(); updateModelInfoDisplay();
+    showToast('场景已完整重置：模型、训练区域、路径、导航、天气、视角和驾驶状态已恢复');
+};
+
+setViewMode = function(mode) {
+    viewMode = mode;
+    document.getElementById('viewAbove').classList.toggle('active', mode==='above');
+    document.getElementById('viewBelow').classList.toggle('active', mode==='below');
+    if (mode === 'below') {
+        camera.position.set(0, -32, 72); controls.target.set(0, -12, 0);
+        if (underwaterParticles) underwaterParticles.visible = true;
+        let bubbles = scene.getObjectByName('underwaterBubbles'); if (bubbles) bubbles.visible = true;
+        if (uwScatter) uwScatter.visible = true;
+    } else {
+        camera.position.set(0, 76, 214); controls.target.set(0, 0, 0);
+        if (underwaterParticles) underwaterParticles.visible = false;
+        let bubbles = scene.getObjectByName('underwaterBubbles'); if (bubbles) bubbles.visible = false;
+        if (uwScatter) uwScatter.visible = false;
+    }
+    applyTimeEnvironment(); controls.update(); showToast(mode==='above'?'水上视角':'水下视角');
+};
+
+applyTimeEnvironment = (function(original){
+    return function() {
+        if (typeof original === 'function') original();
+        let hourFrac = Math.floor(simTimeMinutes/60) + simTimeMinutes%60/60;
+        let sunAltitude = Math.sin((hourFrac - 6) / 24 * Math.PI * 2);
+        let cloud = weather.cloudCover || 0;
+        let rain = weather.rain || 0;
+        if (water && water.mesh) {
+            water.mesh.material.opacity = viewMode === 'below' ? 0.22 : clamp(0.58 + sunAltitude*0.16 - rain*0.18, 0.35, 0.86);
+            water.mesh.material.transparent = true;
+        }
+        if (scene.fog) {
+            let fogColor = viewMode === 'below' ? new THREE.Color(0x0a3450) : new THREE.Color(sunAltitude > 0 ? 0x9fc8e8 : 0x071528);
+            scene.fog.color.copy(fogColor);
+            scene.fog.density = viewMode === 'below' ? 0.012 + cloud*0.006 : 0.00055 + cloud*0.0014 + rain*0.002;
+        }
+        if (sunLight) sunLight.intensity *= clamp(1 - cloud*0.55 - rain*0.35, 0.18, 1.0);
+    };
+})(applyTimeEnvironment);
+
+updateWeather = function() {
+    let hourFrac = Math.floor(simTimeMinutes/60) + simTimeMinutes%60/60;
+    let isDay = hourFrac > 6 && hourFrac < 18;
+    let states = ['clear','cloudy','rain','storm'];
+    let probs = { clear:[0.56,0.28,0.13,0.03], cloudy:[0.28,0.42,0.24,0.06], rain:[0.18,0.32,0.40,0.10], storm:[0.12,0.24,0.38,0.26] }[weather.type || 'clear'];
+    if (!isDay) { probs = probs.slice(); probs[0]+=0.08; probs[3]+=0.02; probs[1]-=0.04; probs[2]-=0.06; }
+    let r=Math.random(), acc=0, newType='clear';
+    for (let i=0;i<states.length;i++){ acc+=probs[i]; if(r<=acc){ newType=states[i]; break; } }
+    weather.prevType=weather.type; weather.prevWindSpeed=weather.windSpeed; weather.prevWaveHeight=weather.waveHeight; weather.prevCloudCover=weather.cloudCover; weather.prevRain=weather.rain;
+    weather.targetType=newType; weather.transitionProgress=0;
+    let params = { clear:[1+Math.random()*5,0.15+Math.random()*0.35,0.05+Math.random()*0.20,0], cloudy:[4+Math.random()*8,0.45+Math.random()*0.85,0.48+Math.random()*0.32,0], rain:[8+Math.random()*12,0.9+Math.random()*1.6,0.72+Math.random()*0.23,0.35+Math.random()*0.45], storm:[16+Math.random()*22,2.2+Math.random()*3.8,0.88+Math.random()*0.12,0.75+Math.random()*0.25] }[newType];
+    weather.targetWindSpeed=params[0]; weather.targetWaveHeight=params[1]; weather.targetCloudCover=params[2]; weather.targetRain=params[3];
+};
+
+
+// ==================== 启动 ====================
+window.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>

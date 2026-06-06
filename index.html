@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能船舶3D控制平台</title>
+    <style>
+        *{box-sizing:border-box} body{margin:0;min-height:100vh;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif;color:#f5f7fb;background:radial-gradient(circle at 20% 10%,rgba(10,132,255,.32),transparent 30%),radial-gradient(circle at 80% 0%,rgba(100,210,255,.24),transparent 35%),linear-gradient(145deg,#06101f,#020712 65%,#000);display:flex;align-items:center;justify-content:center;padding:32px;overflow:hidden} body:before{content:"";position:fixed;inset:auto -10% -25% -10%;height:50%;background:linear-gradient(180deg,rgba(100,210,255,.18),rgba(10,132,255,.05));filter:blur(20px);transform:skewY(-4deg)} .shell{width:min(980px,100%);position:relative;z-index:1}.hero{padding:42px;border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.10);border-radius:34px;box-shadow:0 30px 80px rgba(0,0,0,.38);backdrop-filter:blur(28px) saturate(180%);-webkit-backdrop-filter:blur(28px) saturate(180%)} .badge{display:inline-flex;gap:8px;align-items:center;padding:8px 13px;border-radius:999px;background:rgba(10,132,255,.18);border:1px solid rgba(100,210,255,.22);color:#dff4ff;font-size:13px} h1{font-size:clamp(34px,6vw,68px);line-height:1.02;margin:22px 0 14px;letter-spacing:-.05em}.sub{max-width:680px;font-size:18px;line-height:1.7;color:rgba(245,247,251,.72);margin-bottom:28px}.cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{display:block;text-decoration:none;color:#fff;padding:22px;border-radius:24px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.14);transition:.22s ease;min-height:148px}.card:hover{transform:translateY(-4px);background:rgba(255,255,255,.18);box-shadow:0 16px 44px rgba(0,0,0,.24)} .icon{width:48px;height:48px;border-radius:16px;display:flex;align-items:center;justify-content:center;background:linear-gradient(145deg,#0a84ff,#64d2ff);font-size:24px;margin-bottom:16px}.card h2{margin:0 0 8px;font-size:22px;letter-spacing:-.02em}.card p{margin:0;color:rgba(245,247,251,.68);line-height:1.55;font-size:14px}.foot{margin-top:16px;color:rgba(245,247,251,.48);font-size:13px;text-align:center}@media(max-width:720px){.cards{grid-template-columns:1fr}.hero{padding:28px}}
+    </style>
+</head>
+<body>
+    <main class="shell">
+        <section class="hero">
+            <div class="badge">⛵ 真实水动力 · 手势控制 · 时间天气环境</div>
+            <h1>智能船舶 3D 控制平台</h1>
+            <p class="sub">保留主页面与控制面板两个入口。新版控制面板提供模型密度/体积输入、浮力与阻力反馈、波浪交互、手势节点显示、环境时间轴和 Apple 风格界面。</p>
+            <div class="cards">
+                <a class="card" href="control-full.html"><div class="icon">⚙️</div><h2>进入控制面板</h2><p>推荐使用：完整仿真、模型导入、驾驶控制、时间天气和物理参数调节。</p></a>
+                <a class="card" href="ship_control_frontend_3d_dashboard.html"><div class="icon">🌊</div><h2>打开主页面</h2><p>保留原主页面入口，不删除原有页面与主要功能。</p></a>
+            </div>
+        </section>
+        <div class="foot">请使用支持 WebGL 与摄像头权限的现代浏览器运行手势控制。</div>
+    </main>
+</body>
+</html>
