@@ -1393,8 +1393,9 @@ function updateManualDrivePhysics() {
     let rudder = 0;
     if (driveKeys['w']) throttle += 1;
     if (driveKeys['s']) throttle -= 1;
-    if (driveKeys['a']) rudder -= 1;
-    if (driveKeys['d']) rudder += 1;
+    // 修正 A/D 方向：A = 模型左转，D = 模型右转。
+    if (driveKeys['a']) rudder += 1;
+    if (driveKeys['d']) rudder -= 1;
     applyDriveForces(driveModel, driveModelBody, clamp(throttle, -1, 1), clamp(rudder, -1, 1));
 }
 
@@ -1406,8 +1407,9 @@ function applyKeyboardNudgePhysics(key) {
     let rudder = 0;
     if (key === 'w') throttle = 1;
     if (key === 's') throttle = -1;
-    if (key === 'a') rudder = -1;
-    if (key === 'd') rudder = 1;
+    // 修正 A/D 方向：A = 模型左转，D = 模型右转。
+    if (key === 'a') rudder = 1;
+    if (key === 'd') rudder = -1;
     if (throttle !== 0 || rudder !== 0) {
         applyDriveForces(selectedModel, body, throttle, rudder);
     } else if (key === 'q' || key === 'e') {
@@ -2593,8 +2595,7 @@ function toggleManualDrive() {
 
 // ==================== 手势控制 ====================
 function toggleGestureDrive() {
-    gestureActive = !gestureActive;
-    if (gestureActive) startGesture();
+    if (!gestureActive) startGesture();
     else stopGesture();
 }
 
@@ -3291,7 +3292,7 @@ let yoyoLastCommand = { throttle: 0, rudder: 0 };
 let yoyoLastDecision = 'idle';
 let yoyoNoHandFrames = 0;
 const YOYO_TRAIL_MAX = 18;
-const YOYO_OPEN_FINGER_MIN = 4;
+const YOYO_OPEN_FINGER_MIN = 3;
 const YOYO_DEAD_ZONE = 0.12;
 const YOYO_RELEASE_ZONE = 0.07;
 const YOYO_SMOOTH_ALPHA = 0.24;
@@ -3336,12 +3337,22 @@ function estimatePhysicalVolume(mesh) {
     return Math.max(boxVolume * coefficient, 0.000001);
 }
 
-updateHydroData = function(mesh, explicitVolume) {
+updateHydroData = function(mesh, explicitVolume, forceRecompute) {
     if (!mesh) return { x: 1, y: 1, z: 1, volume: 1 };
+    if (!mesh.userData) mesh.userData = {};
     let size = getModelWorldSize(mesh);
     let boxVolume = Math.max(size.x * size.y * size.z, 0.000001);
-    let estimated = estimatePhysicalVolume(mesh);
-    let manual = !!(mesh.userData && mesh.userData.manualVolume);
+    // 性能修复：体积估算需要遍历模型全部几何体，不能在每一帧浮力计算中重复执行。
+    // 仅在模型尺寸明显变化、首次计算、用户手动体积变化或显式要求时重新估算。
+    let sizeSig = size.x.toFixed(4) + ',' + size.y.toFixed(4) + ',' + size.z.toFixed(4);
+    let manual = !!mesh.userData.manualVolume;
+    let needEstimate = forceRecompute || mesh.userData._volumeSizeSig !== sizeSig || !isFinite(mesh.userData._estimatedPhysicalVolume);
+    let estimated = mesh.userData._estimatedPhysicalVolume;
+    if (needEstimate) {
+        estimated = estimatePhysicalVolume(mesh);
+        mesh.userData._estimatedPhysicalVolume = estimated;
+        mesh.userData._volumeSizeSig = sizeSig;
+    }
     let volume = manual && explicitVolume !== undefined ? Math.max(parseFloat(explicitVolume) || estimated, 0.000001) : estimated;
     // 排开水体积不能大于外包盒体积；真实模型若有空舱，需要由密度/体积输入体现。
     volume = clamp(volume, 0.000001, boxVolume * 0.98);
@@ -3370,7 +3381,8 @@ positionBodyAtPhysicalDraft = function(mesh, body) {
 
 applyBuoyancy = function(mesh, body) {
     if (!body || body.mass <= 0 || !mesh) return;
-    let hull = updateHydroData(mesh, mesh.userData.volume);
+    // 每帧只读取已缓存的水动力尺寸，避免重复几何遍历导致页面卡顿。
+    let hull = mesh.userData.hullSize ? { x: mesh.userData.hullSize.x, y: mesh.userData.hullSize.y, z: mesh.userData.hullSize.z, volume: mesh.userData.volume || 1 } : updateHydroData(mesh, mesh.userData.volume);
     let volume = Math.max(mesh.userData.displacementVolume || hull.volume, 0.000001);
     let rho = physicsParams.waterDensity;
     let g = Math.abs(physicsParams.gravity);
@@ -3575,7 +3587,7 @@ startGesture = function() {
     yoyoPalmTrail = []; yoyoStableFrames = 0; yoyoNoHandFrames = 0; yoyoLastCommand = {throttle:0,rudder:0};
     let dot = document.getElementById('gestureDot'), text = document.getElementById('gestureText');
     if (dot) dot.className = 'gesture-dot on';
-    if (text) text.textContent = 'YOYO手势已激活 · 张开4/5指后用掌心轨迹控制';
+    if (text) text.textContent = 'YOYO手势已激活 · 张开3/5指后用掌心轨迹控制';
     let status = document.getElementById('gestureStatus'); if (status) status.style.display = 'flex';
     let preview = document.getElementById('gestureVideoPreview'); if (preview) preview.style.display = 'block';
     initGestureCamera();
@@ -3589,6 +3601,11 @@ stopGesture = function() {
     let preview = document.getElementById('gestureVideoPreview'); if (preview) preview.style.display = 'none';
     if (gestureCamera && gestureCamera.stop) gestureCamera.stop();
     if (gestureRafId) cancelAnimationFrame(gestureRafId);
+    let video = document.getElementById('gestureVideoEl');
+    if (video && video.srcObject) {
+        try { video.srcObject.getTracks().forEach(function(t){ t.stop(); }); } catch(e) {}
+        video.srcObject = null;
+    }
     gestureCamera = null; gestureRafId = null;
     yoyoPalmTrail = []; yoyoNoHandFrames = 0; yoyoStableFrames = 0;
     driveKeys['w']=driveKeys['s']=driveKeys['a']=driveKeys['d']=false;
@@ -3609,7 +3626,7 @@ initGestureCamera = function() {
         }
         async function sendGestureFrame() {
             let now = performance.now();
-            if (!gestureActive || gestureFrameBusy || video.readyState < 2 || now - gestureLastFrameSent < 58) return;
+            if (!gestureActive || gestureFrameBusy || video.readyState < 2 || now - gestureLastFrameSent < 85) return;
             gestureFrameBusy = true;
             gestureLastFrameSent = now;
             try { await hands.send({image: video}); }
@@ -3618,10 +3635,10 @@ initGestureCamera = function() {
         }
         if (window.Camera) {
             if (gestureCamera && gestureCamera.stop) gestureCamera.stop();
-            gestureCamera = new Camera(video, { onFrame: sendGestureFrame, width: 416, height: 312 });
+            gestureCamera = new Camera(video, { onFrame: sendGestureFrame, width: 320, height: 240 });
             gestureCamera.start();
         } else if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            navigator.mediaDevices.getUserMedia({video:{width:416,height:312, frameRate:{ideal:18,max:24}}, audio:false}).then(function(stream){
+            navigator.mediaDevices.getUserMedia({video:{width:320,height:240, frameRate:{ideal:12,max:15}}, audio:false}).then(function(stream){
                 video.srcObject = stream; video.play();
                 let loop = async function(){ if (!gestureActive) return; await sendGestureFrame(); gestureRafId = requestAnimationFrame(loop); };
                 loop();
@@ -3630,7 +3647,7 @@ initGestureCamera = function() {
         } else {
             showToast('当前浏览器不支持摄像头手势识别', true);
         }
-        showToast('YOYO手势窗口已打开：掌心轨迹控制，握拳/少于4指立即停车');
+        showToast('YOYO手势窗口已打开：掌心轨迹控制，握拳/少于3指立即停车');
     } catch(e) {
         gestureActive = false;
         showToast('手势初始化失败: ' + e.message, true);
@@ -3645,7 +3662,9 @@ onHandResults = function(results) {
     } else {
         yoyoNoHandFrames++;
     }
-    drawHandLandmarks(results);
+    // 降低绘制频率，减少 Canvas 与手势识别同时运行造成的卡顿。
+    perfFrameMod = (perfFrameMod + 1) % 2;
+    if (perfFrameMod === 0) drawHandLandmarks(results);
     if (!gestureActive || controlMode !== 'gesture' || !manualDriveActive || !driveModelBody) return;
 
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
@@ -3659,7 +3678,7 @@ onHandResults = function(results) {
             gestureDepthSmooth = null;
             yoyoPalmTrail = [];
             yoyoStableFrames = 0;
-            yoyoResetGestureInput('YOYO待机：张开4/5个指头开始 · 当前:' + fingerCount);
+            yoyoResetGestureInput('YOYO待机：张开3个以上指头开始 · 当前:' + fingerCount);
             return;
         }
 

@@ -1484,10 +1484,12 @@ function handleKeyDown(e) {
             if (selectedModel) selectedModel.position.z += speed;
             break;
         case 'a':
-            if (selectedModel) selectedModel.rotation.y -= THREE.MathUtils.degToRad(6);
+            // 修正：A 键 = 模型左转
+            if (selectedModel) selectedModel.rotation.y += THREE.MathUtils.degToRad(6);
             break;
         case 'd':
-            if (selectedModel) selectedModel.rotation.y += THREE.MathUtils.degToRad(6);
+            // 修正：D 键 = 模型右转
+            if (selectedModel) selectedModel.rotation.y -= THREE.MathUtils.degToRad(6);
             break;
         case 'q':
             if (selectedModel) selectedModel.position.y += speed;
