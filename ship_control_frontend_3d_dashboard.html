@@ -1,0 +1,2241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能船舶3D控制平台</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.0.1/dist/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, sans-serif; 
+            background: linear-gradient(180deg, #0a1929 0%, #001122 50%, #0a1929 100%);
+            color: #e0f7fa;
+            min-height: 100vh;
+        }
+        
+        /* 滚动进度条 */
+        .scroll-progress {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 0%;
+            height: 3px;
+            background: linear-gradient(90deg, #40e0d0, #0077b6, #4facfe);
+            z-index: 2000;
+            transition: width 0.1s linear;
+            box-shadow: 0 0 10px rgba(64, 224, 208, 0.5);
+        }
+        
+        /* 滚动指示器 */
+        .scroll-indicator {
+            position: fixed;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s;
+        }
+        .scroll-indicator.visible { opacity: 1; visibility: visible; }
+        .scroll-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: rgba(64, 224, 208, 0.3);
+            border: 2px solid rgba(64, 224, 208, 0.5);
+            cursor: pointer;
+            transition: all 0.3s;
+            position: relative;
+        }
+        .scroll-dot:hover, .scroll-dot.active {
+            background: #40e0d0;
+            border-color: #40e0d0;
+            transform: scale(1.3);
+        }
+        .scroll-dot::after {
+            content: attr(data-label);
+            position: absolute;
+            right: 24px;
+            top: 50%;
+            transform: translateY(-50%);
+            white-space: nowrap;
+            font-size: 0.75rem;
+            color: #40e0d0;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+        .scroll-dot:hover::after { opacity: 1; }
+        
+        /* 页面容器 */
+        .page-container {
+            position: relative;
+            z-index: 1;
+        }
+        
+        /* 英雄区域 - 顶部标题区 */
+        .hero-header {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 60px 20px;
+            position: relative;
+            overflow: hidden;
+        }
+        .hero-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(ellipse at center, rgba(64, 224, 208, 0.1) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .hero-title {
+            font-size: clamp(2.5rem, 6vw, 4rem);
+            font-weight: 700;
+            background: linear-gradient(135deg, #40e0d0, #4facfe, #00f2fe);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 30px;
+            letter-spacing: 2px;
+            text-shadow: 0 0 40px rgba(64, 224, 208, 0.3);
+        }
+        .hero-subtitle {
+            font-size: clamp(1rem, 2vw, 1.3rem);
+            color: rgba(255, 255, 255, 0.7);
+            max-width: 700px;
+            line-height: 1.8;
+            margin-bottom: 50px;
+        }
+        .hero-stats {
+            display: flex;
+            gap: 40px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .stat-item {
+            text-align: center;
+            padding: 20px 30px;
+            background: rgba(10, 25, 47, 0.6);
+            border-radius: 12px;
+            border: 1px solid rgba(64, 224, 208, 0.2);
+            backdrop-filter: blur(10px);
+        }
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #40e0d0;
+        }
+        .stat-label {
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.6);
+            margin-top: 5px;
+        }
+        .scroll-hint {
+            position: absolute;
+            bottom: 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 0.9rem;
+            animation: bounce 2s infinite;
+        }
+        .scroll-arrow {
+            font-weight: 300;
+            animation: scrollDown 1.5s infinite;
+        }
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(10px); }
+        }
+        @keyframes scrollDown {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 1; }
+        }
+        
+        /* 主控制窗口 */
+        .main-control-section {
+            padding: 80px 20px;
+            scroll-margin-top: 80px;
+        }
+        .section-title {
+            text-align: center;
+            font-size: 2rem;
+            color: #40e0d0;
+            margin-bottom: 10px;
+        }
+        .section-subtitle {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.6);
+            margin-bottom: 40px;
+        }
+        .main-control-window {
+            background: rgba(10, 25, 47, 0.9);
+            border-radius: 20px;
+            border: 2px solid rgba(64, 224, 208, 0.3);
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 40px rgba(64, 224, 208, 0.1);
+            cursor: pointer;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .main-control-window:hover {
+            transform: translateY(-5px);
+            border-color: rgba(64, 224, 208, 0.6);
+            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), 0 0 60px rgba(64, 224, 208, 0.2);
+        }
+        #canvas-container {
+            width: 100%;
+            height: 500px;
+            background: linear-gradient(180deg, #001122 0%, #0a1929 100%);
+            position: relative;
+        }
+        .canvas-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+        .main-control-window:hover .canvas-overlay { opacity: 1; }
+        .expand-hint {
+            background: rgba(64, 224, 208, 0.9);
+            color: #001122;
+            padding: 12px 24px;
+            border-radius: 30px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .expand-icon {
+            background: #001122;
+            color: #40e0d0;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            font-family: 'Courier New', monospace;
+        }
+        /* 卡片式控制面板网格 */
+        .controls-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 30px;
+            padding: 80px 20px;
+            scroll-margin-top: 80px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .control-card {
+            background: rgba(10, 25, 47, 0.95);
+            border-radius: 16px;
+            border: 1px solid rgba(64, 224, 208, 0.2);
+            padding: 25px;
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+        .control-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, #40e0d0, transparent);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .control-card:hover {
+            transform: translateY(-8px);
+            border-color: rgba(64, 224, 208, 0.4);
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+        }
+        .control-card:hover::before { opacity: 1; }
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid rgba(64, 224, 208, 0.1);
+        }
+        .card-icon {
+            font-size: 0.9rem;
+            font-weight: 700;
+            font-family: 'Courier New', monospace;
+            color: #40e0d0;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(64, 224, 208, 0.15);
+            border-radius: 8px;
+        }
+        .card-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #40e0d0;
+        }
+        .card-content { flex: 1; }
+        
+        /* 操作指南区域 */
+        .instructions-section {
+            padding: 80px 20px;
+            scroll-margin-top: 80px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .instruction-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-top: 40px;
+        }
+        .instruction-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px;
+            background: rgba(10, 25, 47, 0.6);
+            border-radius: 10px;
+            border: 1px solid rgba(64, 224, 208, 0.1);
+        }
+        .instruction-key {
+            background: rgba(64, 224, 208, 0.2);
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-weight: 600;
+            color: #40e0d0;
+            white-space: nowrap;
+        }
+        .instruction-desc { color: rgba(255, 255, 255, 0.7); }
+        
+        /* 懒加载动画 */
+        .fade-in {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .fade-in.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .fade-in-delay-1 { transition-delay: 0.1s; }
+        .fade-in-delay-2 { transition-delay: 0.2s; }
+        .fade-in-delay-3 { transition-delay: 0.3s; }
+        
+        /* 响应式调整 */
+        @media (max-width: 768px) {
+            .scroll-indicator { display: none; }
+            .hero-stats { gap: 20px; }
+            .controls-grid { grid-template-columns: 1fr; padding: 40px 15px; }
+            .control-card { padding: 20px; }
+            .stat-item { padding: 15px 20px; }
+        }
+        
+        /* 顶部状态栏 */
+        .status-bar {
+            position: fixed; top: 0; left: 0; right: 0; height: 50px;
+            background: rgba(10, 25, 47, 0.95); backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(64, 224, 208, 0.3);
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 20px; z-index: 100;
+        }
+        .status-bar h1 {
+            font-size: 1.5rem; color: #40e0d0;
+            background: linear-gradient(to right, #4facfe, #00f2fe);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .status-info { display: flex; gap: 20px; align-items: center; }
+        .status-item { display: flex; align-items: center; gap: 8px; color: #ccc; font-size: 0.9rem; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .status-dot.connected { background: #4caf50; animation: pulse 2s infinite; }
+        .status-dot.disconnected { background: #f44336; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        
+        /* 控制面板 */
+        .panel {
+            position: fixed; background: rgba(10, 25, 47, 0.95);
+            backdrop-filter: blur(10px); border-radius: 12px;
+            border: 1px solid rgba(64, 224, 208, 0.3);
+            box-shadow: 0 8px 32px rgba(0, 60, 120, 0.3);
+            padding: 20px; z-index: 10;
+            transition: transform 0.3s, opacity 0.3s;
+        }
+        .panel.hidden { transform: translateY(-120%); opacity: 0; pointer-events: none; }
+        .panel-title {
+            font-size: 1.2rem; color: #40e0d0; margin-bottom: 15px;
+            padding-bottom: 10px; border-bottom: 2px solid rgba(64, 224, 208, 0.3);
+        }
+        
+        /* 左侧控制面板 */
+        .left-panel { top: 70px; left: 20px; width: 300px; }
+        
+        /* 右侧信息面板 */
+        .right-panel { top: 70px; right: 20px; width: 320px; }
+        
+        /* 底部控制区 */
+        .bottom-panel { bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 15px; }
+        
+        /* 传感器数据样式 */
+        .sensor-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+        .sensor-item {
+            background: rgba(0, 0, 0, 0.3); border-radius: 8px; padding: 12px;
+            display: flex; align-items: center; gap: 10px;
+        }
+        .sensor-icon { 
+            font-size: 0.85rem; 
+            font-weight: 700;
+            font-family: 'Courier New', monospace;
+            color: #40e0d0;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(64, 224, 208, 0.15);
+            border-radius: 6px;
+        }
+        .sensor-info { flex: 1; }
+        .sensor-label { font-size: 0.75rem; color: #888; }
+        .sensor-value { font-size: 1rem; font-weight: bold; color: #40e0d0; }
+        
+        /* 方向控制 */
+        .direction-control { display: grid; grid-template-columns: repeat(3, 60px); gap: 8px; }
+        .dir-btn {
+            width: 60px; height: 60px; border: none; border-radius: 10px;
+            background: linear-gradient(145deg, #0077b6, #00b4d8);
+            color: white; font-size: 1.5rem; cursor: pointer;
+            transition: all 0.2s; box-shadow: 0 4px 15px rgba(0, 180, 216, 0.3);
+        }
+        .dir-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0, 180, 216, 0.5); }
+        .dir-btn:active { transform: translateY(0); }
+        .dir-btn.stop { background: linear-gradient(145deg, #e63946, #ff6b6b); }
+        
+        /* 速度滑块 */
+        .speed-control { margin-top: 15px; }
+        .speed-label { display: flex; justify-content: space-between; margin-bottom: 8px; color: #ccc; }
+        .speed-slider {
+            width: 100%; height: 8px; border-radius: 4px; background: #333;
+            -webkit-appearance: none; cursor: pointer;
+        }
+        .speed-slider::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 20px; height: 20px;
+            border-radius: 50%; background: #40e0d0; cursor: pointer;
+        }
+        
+        /* 文件上传 */
+        .file-upload-area {
+            border: 2px dashed rgba(64, 224, 208, 0.5); border-radius: 10px;
+            padding: 30px; text-align: center; cursor: pointer;
+            transition: all 0.3s; background: rgba(5, 15, 30, 0.4);
+        }
+        .file-upload-area:hover { border-color: #40e0d0; background: rgba(5, 15, 30, 0.6); }
+        .file-upload-area .icon { font-size: 2.5rem; margin-bottom: 10px; }
+        
+        /* 按钮样式 */
+        .btn {
+            padding: 10px 20px; border: none; border-radius: 8px;
+            cursor: pointer; font-weight: 600; transition: all 0.3s;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+        }
+        .btn-primary { background: linear-gradient(45deg, #0077b6, #00b4d8); color: white; }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0, 180, 216, 0.5); }
+        .btn-danger { background: linear-gradient(45deg, #e63946, #ff6b6b); color: white; }
+        .btn-secondary { background: rgba(255, 255, 255, 0.1); color: white; border: 1px solid rgba(255, 255, 255, 0.2); }
+        
+        /* 操作说明 */
+        .instructions {
+            position: fixed; bottom: 0; left: 0; right: 0;
+            background: rgba(10, 25, 47, 0.95); padding: 15px 20px;
+            border-top: 1px solid rgba(64, 224, 208, 0.3);
+            color: #e0f7fa; font-size: 0.95rem; text-align: center;
+            z-index: 100; transition: opacity 0.5s;
+        }
+        .instructions.hidden { opacity: 0; pointer-events: none; }
+        .instructions kbd {
+            background: rgba(64, 224, 208, 0.2); padding: 3px 8px;
+            border-radius: 4px; border: 1px solid rgba(64, 224, 208, 0.5);
+            margin: 0 3px; font-family: monospace;
+        }
+        
+        /* 通知提示 */
+        .notification {
+            position: fixed; top: 70px; right: 20px;
+            background: rgba(76, 175, 80, 0.95); color: white;
+            padding: 15px 25px; border-radius: 8px; z-index: 200;
+            transform: translateX(120%); transition: transform 0.3s ease;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+        .notification.show { transform: translateX(0); }
+        .notification.error { background: rgba(244, 67, 54, 0.95); }
+        
+        /* 环境控制 */
+        .env-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+        .env-btn {
+            padding: 8px 16px; border: none; border-radius: 20px;
+            background: rgba(64, 224, 208, 0.3); color: white;
+            cursor: pointer; transition: all 0.3s;
+        }
+        .env-btn.active { background: #40e0d0; box-shadow: 0 0 10px #40e0d0; }
+        .env-btn:hover { background: rgba(64, 224, 208, 0.5); }
+        
+        /* 模型列表 */
+        .model-list { max-height: 200px; overflow-y: auto; margin-top: 15px; }
+        .model-item {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 10px; margin-bottom: 8px; border-radius: 8px;
+            background: rgba(0, 0, 0, 0.3); cursor: pointer;
+            transition: all 0.2s;
+        }
+        .model-item:hover { background: rgba(64, 224, 208, 0.2); }
+        .model-item.selected { background: rgba(64, 224, 208, 0.3); border: 1px solid #40e0d0; }
+        .model-name { font-size: 0.9rem; color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+        .model-actions { display: flex; gap: 5px; }
+        .model-actions button {
+            padding: 5px 10px; border: none; border-radius: 5px;
+            cursor: pointer; font-size: 0.8rem; transition: all 0.2s;
+        }
+        .btn-view { background: rgba(33, 150, 243, 0.8); color: white; }
+        .btn-del { background: rgba(244, 67, 54, 0.8); color: white; }
+        
+        /* 性能监控 */
+        .performance-panel {
+            position: fixed; top: 70px; right: 360px;
+            background: rgba(0, 0, 0, 0.8); padding: 10px 15px;
+            border-radius: 8px; font-size: 0.85rem; color: #ccc;
+            border: 1px solid rgba(64, 224, 208, 0.3);
+        }
+        .perf-item { display: flex; justify-content: space-between; gap: 20px; margin-bottom: 5px; }
+        .perf-value { color: #40e0d0; font-weight: bold; }
+        
+        /* AI聊天 */
+        .ai-chat-panel {
+            position: fixed; bottom: 100px; right: 20px; width: 350px;
+            max-height: 400px; display: flex; flex-direction: column;
+        }
+        .chat-messages { flex: 1; overflow-y: auto; max-height: 300px; margin-bottom: 10px; }
+        .chat-message { margin-bottom: 10px; padding: 10px; border-radius: 8px; }
+        .chat-message.user { background: rgba(64, 224, 208, 0.3); margin-left: 20%; }
+        .chat-message.ai { background: rgba(100, 100, 100, 0.3); margin-right: 20%; }
+        .chat-input-group { display: flex; gap: 8px; }
+        .chat-input { flex: 1; padding: 10px; border: 1px solid rgba(64, 224, 208, 0.3); border-radius: 8px; background: rgba(0, 0, 0, 0.5); color: white; }
+        .chat-input::placeholder { color: #666; }
+        
+        /* 隐藏按钮 */
+        .toggle-ui-btn {
+            position: fixed; top: 60px; right: 20px; z-index: 150;
+            background: rgba(10, 25, 47, 0.95); border: 1px solid rgba(64, 224, 208, 0.3);
+            color: #40e0d0; width: 40px; height: 40px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; font-size: 1.2rem; transition: all 0.3s;
+        }
+        .toggle-ui-btn:hover { background: rgba(64, 224, 208, 0.2); transform: rotate(90deg); }
+        
+        /* 模型变换控制 */
+        .transform-panel {
+            background: rgba(10, 25, 47, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            border: 1px solid rgba(64, 224, 208, 0.3);
+            box-shadow: 0 8px 32px rgba(0, 60, 120, 0.3);
+            padding: 20px;
+            z-index: 10;
+            position: fixed;
+            left: 50%;
+            top: 70px;
+            transform: translateX(-50%);
+            width: 380px;
+        }
+        .transform-section {
+            margin-bottom: 15px;
+        }
+        .transform-section:last-child {
+            margin-bottom: 0;
+        }
+        .transform-title {
+            font-size: 0.95rem;
+            color: #40e0d0;
+            margin-bottom: 10px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .transform-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+        .transform-input-group {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .transform-label {
+            font-size: 0.75rem;
+            color: #888;
+            font-weight: 600;
+        }
+        .transform-input {
+            width: 100%;
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(64, 224, 208, 0.3);
+            border-radius: 6px;
+            color: #40e0d0;
+            font-size: 0.9rem;
+            font-family: 'Consolas', monospace;
+            transition: all 0.2s;
+        }
+        .transform-input:focus {
+            outline: none;
+            border-color: #40e0d0;
+            box-shadow: 0 0 10px rgba(64, 224, 208, 0.3);
+            background: rgba(64, 224, 208, 0.1);
+        }
+        .transform-input.invalid {
+            border-color: #ff6b6b;
+            background: rgba(255, 107, 107, 0.1);
+        }
+        .transform-input.valid {
+            border-color: #4caf50;
+            background: rgba(76, 175, 80, 0.1);
+        }
+        .transform-buttons {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .transform-btn {
+            flex: 1;
+            padding: 8px 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        .transform-btn.reset {
+            background: rgba(244, 67, 54, 0.8);
+            color: white;
+        }
+        .transform-btn.apply {
+            background: linear-gradient(45deg, #0077b6, #00b4d8);
+            color: white;
+        }
+        .transform-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 180, 216, 0.3);
+        }
+        .transform-hint {
+            font-size: 0.75rem;
+            color: #666;
+            margin-top: 8px;
+            text-align: center;
+        }
+        .transform-status {
+            font-size: 0.8rem;
+            color: #4caf50;
+            margin-top: 10px;
+            text-align: center;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .transform-status.show {
+            opacity: 1;
+        }
+    </style>
+
+<style id="apple-ui-refresh">
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif!important;background:radial-gradient(circle at 20% 0%,rgba(10,132,255,.22),transparent 36%),linear-gradient(145deg,#07111f,#020713)!important;color:#f5f7fb!important}button,input,select{border-radius:999px!important} .panel,.card,.control-panel,section,aside{backdrop-filter:blur(24px) saturate(180%);-webkit-backdrop-filter:blur(24px) saturate(180%);border-radius:20px!important}
+</style>
+</head>
+<body>
+    <!-- 滚动进度条 -->
+    <div class="scroll-progress" id="scrollProgress"></div>
+    
+    <!-- 滚动指示器 -->
+    <div class="scroll-indicator" id="scrollIndicator">
+        <div class="scroll-dot active" data-section="hero" data-label="首页" onclick="scrollToSection('hero')"></div>
+        <div class="scroll-dot" data-section="control" data-label="主控制窗口" onclick="scrollToSection('control')"></div>
+        <div class="scroll-dot" data-section="controls" data-label="控制面板" onclick="scrollToSection('controls')"></div>
+        <div class="scroll-dot" data-section="instructions" data-label="操作指南" onclick="scrollToSection('instructions')"></div>
+    </div>
+
+    <!-- 顶部状态栏 -->
+    <div class="status-bar">
+        <h1>智能船舶3D控制平台</h1>
+        <div class="status-info">
+            <div class="status-item">
+                <div class="status-dot disconnected" id="connectionDot"></div>
+                <span id="connectionStatus">未连接</span>
+            </div>
+            <div class="status-item">
+                <span>FPS:</span>
+                <span id="fpsDisplay">0</span>
+            </div>
+            <div class="status-item">
+                <span>模型:</span>
+                <span id="modelCount">0</span>
+            </div>
+            <div class="status-item">
+                <span id="currentTime"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 页面容器 -->
+    <div class="page-container">
+        <!-- 英雄区域 - 顶部标题区 -->
+        <section class="hero-header" id="hero">
+            <h1 class="hero-title">智能船舶3D控制平台</h1>
+            <p class="hero-subtitle">
+                集成了先进的三维可视化技术、实时传感器数据监控与远程控制功能于一体的综合管理平台。
+                支持模型导入、视角控制、环境切换等操作，为船舶模拟与控制提供直观的交互界面。
+            </p>
+            <div class="hero-stats">
+                <div class="stat-item">
+                    <div class="stat-value" id="statModels">0</div>
+                    <div class="stat-label">已加载模型</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="statFPS">60</div>
+                    <div class="stat-label">帧率 FPS</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="statControls">7</div>
+                    <div class="stat-label">控制功能</div>
+                </div>
+            </div>
+            <div class="scroll-hint">
+                <span>向下滚动探索更多</span>
+                <span class="scroll-arrow">|</span>
+            </div>
+        </section>
+
+        <!-- 主控制窗口区域 -->
+        <section class="main-control-section" id="control">
+            <h2 class="section-title">3D主控制窗口</h2>
+            <p class="section-subtitle">点击打开完整控制面板，获得专业级的3D交互体验</p>
+            <div class="main-control-window" id="mainControlWindow" onclick="openControlWindow()">
+                <div id="canvas-container"></div>
+                <div class="canvas-overlay">
+                    <div class="expand-hint">
+                        <span class="expand-icon">3D</span>
+                        <span>点击打开完整控制面板</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 控制面板卡片区域 -->
+        <section class="controls-grid" id="controls">
+            <!-- 模型管理卡片 -->
+            <div class="control-card fade-in">
+                <div class="card-header">
+                    <div class="card-icon">M</div>
+                    <div class="card-content">
+                        <h3 class="card-title">模型管理</h3>
+                    </div>
+                </div>
+                <div class="file-upload-area" id="dropArea">
+                    <div class="icon">+</div>
+                    <p>拖放STL文件或点击上传</p>
+                    <p style="font-size: 0.8rem; color: #888; margin-top: 5px;">支持格式: .stl</p>
+                </div>
+                <input type="file" id="fileInput" accept=".stl" style="display: none;">
+                <div class="model-list" id="modelList"></div>
+                <div style="display: flex; gap: 10px; margin-top: 15px;">
+                    <button class="btn btn-secondary" style="flex: 1;" onclick="resetScene()">R 重置场景</button>
+                </div>
+            </div>
+
+            <!-- 传感器数据卡片 -->
+            <div class="control-card fade-in fade-in-delay-1">
+                <div class="card-header">
+                    <div class="card-icon">S</div>
+                    <div class="card-content">
+                        <h3 class="card-title">传感器数据</h3>
+                    </div>
+                </div>
+                <div class="sensor-grid">
+                    <div class="sensor-item">
+                        <span class="sensor-icon">G</span>
+                        <div class="sensor-info">
+                            <div class="sensor-label">GPS</div>
+                            <div class="sensor-value" id="gpsData">--</div>
+                        </div>
+                    </div>
+                    <div class="sensor-item">
+                        <span class="sensor-icon">V</span>
+                        <div class="sensor-info">
+                            <div class="sensor-label">速度</div>
+                            <div class="sensor-value" id="speedData">0 m/s</div>
+                        </div>
+                    </div>
+                    <div class="sensor-item">
+                        <span class="sensor-icon">B</span>
+                        <div class="sensor-info">
+                            <div class="sensor-label">电量</div>
+                            <div class="sensor-value" id="batteryData">--%</div>
+                        </div>
+                    </div>
+                    <div class="sensor-item">
+                        <span class="sensor-icon">T</span>
+                        <div class="sensor-info">
+                            <div class="sensor-label">温度</div>
+                            <div class="sensor-value" id="tempData">--C</div>
+                        </div>
+                    </div>
+                    <div class="sensor-item">
+                        <span class="sensor-icon">H</span>
+                        <div class="sensor-info">
+                            <div class="sensor-label">湿度</div>
+                            <div class="sensor-value" id="humidityData">--%</div>
+                        </div>
+                    </div>
+                    <div class="sensor-item">
+                        <span class="sensor-icon">D</span>
+                        <div class="sensor-info">
+                            <div class="sensor-label">深度</div>
+                            <div class="sensor-value" id="depthData">0 m</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 环境设置卡片 -->
+            <div class="control-card fade-in">
+                <div class="card-header">
+                    <div class="card-icon">E</div>
+                    <div class="card-content">
+                        <h3 class="card-title">环境设置</h3>
+                    </div>
+                </div>
+                <div class="env-buttons">
+                    <button class="env-btn active" data-env="day">日 白天</button>
+                    <button class="env-btn" data-env="sunset">暮 黄昏</button>
+                    <button class="env-btn" data-env="night">夜 夜晚</button>
+                    <button class="env-btn" data-env="underwater">水 水下</button>
+                    <button class="env-btn" id="followCameraBtn" onclick="toggleCameraFollow()">跟随模型</button>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- 操作指南区域 -->
+        <section class="instructions-section" id="instructions">
+            <h2 class="section-title">操作指南</h2>
+            <p class="section-subtitle">掌握平台各项操作功能</p>
+            <div class="instruction-grid">
+                <div class="instruction-item fade-in">
+                    <span class="instruction-key">鼠标左键</span>
+                    <span class="instruction-desc">拖动移动模型位置</span>
+                </div>
+                <div class="instruction-item fade-in fade-in-delay-1">
+                    <span class="instruction-key">鼠标右键</span>
+                    <span class="instruction-desc">自由旋转查看模型</span>
+                </div>
+                <div class="instruction-item fade-in fade-in-delay-2">
+                    <span class="instruction-key">中键(滚轮按下)</span>
+                    <span class="instruction-desc">旋转3D场景视角</span>
+                </div>
+                <div class="instruction-item fade-in">
+                    <span class="instruction-key">滚轮</span>
+                    <span class="instruction-desc">缩放3D场景视角</span>
+                </div>
+                <div class="instruction-item fade-in fade-in-delay-1">
+                    <span class="instruction-key">Shift + 滚轮</span>
+                    <span class="instruction-desc">缩放选中模型大小</span>
+                </div>
+                <div class="instruction-item fade-in fade-in-delay-2">
+                    <span class="instruction-key">W A S D</span>
+                    <span class="instruction-desc">移动模型(前后左右)</span>
+                </div>
+                <div class="instruction-item fade-in">
+                    <span class="instruction-key">Q / E</span>
+                    <span class="instruction-desc">升高/降低模型位置</span>
+                </div>
+                <div class="instruction-item fade-in fade-in-delay-1">
+                    <span class="instruction-key">H</span>
+                    <span class="instruction-desc">隐藏/显示所有面板</span>
+                </div>
+                <div class="instruction-item fade-in fade-in-delay-2">
+                    <span class="instruction-key">R</span>
+                    <span class="instruction-desc">重置3D场景视角</span>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- 性能监控 -->
+    <div class="performance-panel" id="perfPanel">
+        <div class="perf-item"><span>帧率:</span><span class="perf-value" id="fpsValue">0 FPS</span></div>
+        <div class="perf-item"><span>三角面:</span><span class="perf-value" id="triCount">0</span></div>
+        <div class="perf-item"><span>绘制调用:</span><span class="perf-value" id="drawCalls">0</span></div>
+    </div>
+
+    <!-- 通知提示 -->
+    <div class="notification" id="notification"></div>
+
+    <!-- 隐藏UI按钮 -->
+    <button class="toggle-ui-btn" id="toggleUI" onclick="toggleAllUI()">👁️</button>
+
+<script>
+// ==================== 全局变量 ====================
+let scene, camera, renderer, controls;
+let models = [];
+let selectedModel = null;
+let raycaster = new THREE.Raycaster();
+let mouse = new THREE.Vector2();
+
+// 将鼠标事件坐标转换为NDC（归一化设备坐标，相对于canavas）
+function getNDCFromEvent(e) {
+    var rect = renderer.domElement.getBoundingClientRect();
+    return {
+        x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        y: -((e.clientY - rect.top) / rect.height) * 2 + 1
+    };
+}
+let water, waterNormals;
+let waterDiffuseLayer = null, waterReferenceGroup = null;
+let socket;
+let currentSpeed = 50;
+let cameraFollowEnabled = false, cameraFollowTarget = null;
+let isUIHidden = false;
+let frameCount = 0;
+let lastTime = performance.now();
+let currentEnv = 'day';
+let isDragging = false;
+let dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+let dragOffset = new THREE.Vector3();
+let intersection = new THREE.Vector3();
+let visualFrameMod = 0;
+
+// ==================== 滚动处理 ====================
+function handleScroll() {
+    const scrollTop = window.pageYOffset;
+    const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+    const scrollPercent = (scrollTop / docHeight) * 100;
+    document.getElementById('scrollProgress').style.width = `${scrollPercent}%`;
+    
+    const sections = ['hero', 'control', 'controls', 'instructions'];
+    const scrollIndicator = document.getElementById('scrollIndicator');
+    if (scrollTop > 100) {
+        scrollIndicator.classList.add('visible');
+    } else {
+        scrollIndicator.classList.remove('visible');
+    }
+    
+    sections.forEach(sectionId => {
+        const section = document.getElementById(sectionId);
+        if (section) {
+            const rect = section.getBoundingClientRect();
+            const dot = document.querySelector(`[data-section="${sectionId}"]`);
+            if (dot) {
+                if (rect.top <= window.innerHeight / 2 && rect.bottom >= window.innerHeight / 2) {
+                    dot.classList.add('active');
+                } else {
+                    dot.classList.remove('active');
+                }
+            }
+        }
+    });
+}
+
+function scrollToSection(sectionId) {
+    const element = document.getElementById(sectionId);
+    if (element) {
+        element.scrollIntoView({ behavior: 'smooth' });
+    }
+}
+
+// ==================== 懒加载观察器 ====================
+function observeFadeInElements() {
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.classList.add('visible');
+            }
+        });
+    }, { threshold: 0.1 });
+    document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+}
+
+// ==================== 跳转到控制面板 ====================
+function openControlWindow() {
+    window.location.href = 'control-full.html';
+}
+
+// ==================== 初始化 ====================
+function init() {
+    // 创建场景
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x001220);
+    scene.fog = new THREE.FogExp2(0x80c5ff, 0.002);
+
+    // 创建相机
+    var container = document.getElementById('canvas-container');
+    camera = new THREE.PerspectiveCamera(60, (container.clientWidth || 800) / 500, 0.1, 2000);
+    camera.position.set(0, 50, 100);
+
+    // 创建渲染器
+    renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, logarithmicDepthBuffer: true });
+    renderer.setSize(container.clientWidth || 800, 500);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.BasicShadowMap;
+    if (THREE.sRGBEncoding) renderer.outputEncoding = THREE.sRGBEncoding;
+    if (THREE.ACESFilmicToneMapping) renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.84;
+    container.appendChild(renderer.domElement);
+
+    // 轨道控制器
+    controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.05;
+    controls.minDistance = 20;
+    controls.maxDistance = 500;
+    // 修改控制方式：左键拖动模型，中键(滚轮按下)旋转视角，右键平移视角
+    controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
+
+    // 添加光源
+    addLights();
+
+    // 创建海洋
+    createOcean();
+    createWaterReferenceObjects();
+
+    // 创建水下粒子
+    createUnderwaterParticles();
+
+    // 事件监听
+    setupEventListeners();
+    
+    // 初始化滚动监听
+    window.addEventListener('scroll', handleScroll);
+    handleScroll(); // 初始化滚动状态
+    
+    // 初始化懒加载
+    observeFadeInElements();
+
+    // 更新时间显示
+    updateTime();
+    setInterval(updateTime, 1000);
+
+    // 开始动画循环
+    animate();
+}
+
+// ==================== 光源设置 ====================
+function addLights() {
+    // 柔和环境光 + 低强度主光源，减少水面和模型的刺眼镜面反射。
+    const ambient = new THREE.AmbientLight(0xd8f2ff, 0.22);
+    ambient.name = 'softAmbientLight';
+    scene.add(ambient);
+
+    const sunLight = new THREE.DirectionalLight(0xfff1d6, 0.46);
+    sunLight.position.set(-120, 120, 80);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.width = 2048;
+    sunLight.shadow.mapSize.height = 2048;
+    scene.add(sunLight);
+
+    const hemi = new THREE.HemisphereLight(0x78b7d9, 0x183042, 0.32);
+    hemi.name = 'softHemisphereLight';
+    scene.add(hemi);
+
+    const underwaterLight = new THREE.PointLight(0x1c6fb8, 0.24, 100);
+    underwaterLight.position.set(0, -20, 0);
+    scene.add(underwaterLight);
+}
+
+// ==================== 海洋创建 ====================
+function createOcean() {
+    const oceanSize = 10000;
+    const oceanSeg = 120;
+    const waterGeometry = new THREE.PlaneGeometry(oceanSize, oceanSize, oceanSeg, oceanSeg);
+
+    const waterMaterial = new THREE.MeshPhongMaterial({
+        color: 0x004766,
+        specular: 0x061820,
+        transparent: true,
+        opacity: 0.88,
+        shininess: 18,
+        side: THREE.DoubleSide,
+        emissive: 0x001823,
+        emissiveIntensity: 0.035,
+        wireframe: false,
+        flatShading: false
+    });
+
+    water = new THREE.Mesh(waterGeometry, waterMaterial);
+    water.rotation.x = -Math.PI / 2;
+    water.position.y = 0;
+    water.receiveShadow = true;
+    water.name = 'ocean';
+    water.userData.basePositions = waterGeometry.attributes.position.array.slice();
+    scene.add(water);
+
+    const diffuseMaterial = new THREE.MeshLambertMaterial({
+        color: 0x006b8f,
+        transparent: true,
+        opacity: 0.46,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        wireframe: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1
+    });
+    waterDiffuseLayer = new THREE.Mesh(waterGeometry.clone(), diffuseMaterial);
+    waterDiffuseLayer.rotation.x = -Math.PI / 2;
+    waterDiffuseLayer.position.y = 0.045;
+    waterDiffuseLayer.name = 'waterDiffuseLayer';
+    scene.add(waterDiffuseLayer);
+
+    animateWater();
+}
+
+
+
+function createWaterReferenceObjects() {
+    if (waterReferenceGroup) scene.remove(waterReferenceGroup);
+    waterReferenceGroup = new THREE.Group();
+    waterReferenceGroup.name = 'waterReferenceObjects';
+
+    // 初始场景仅保留固定浮标与初始小船。
+    const buoyRed = new THREE.MeshPhongMaterial({ color: 0xd32f2f, specular: 0x442222, shininess: 28 });
+    const buoyWhite = new THREE.MeshPhongMaterial({ color: 0xf7fafc, specular: 0xffffff, shininess: 20 });
+    const buoyDark = new THREE.MeshPhongMaterial({ color: 0x263238, specular: 0x111111, shininess: 12 });
+    const buoyYellow = new THREE.MeshPhongMaterial({ color: 0xffc107, specular: 0x553300, shininess: 20 });
+    const lightMat = new THREE.MeshPhongMaterial({ color: 0xfff176, emissive: 0xffaa00, emissiveIntensity: 0.55, shininess: 12 });
+
+    function pseudoRandom(seed) {
+        const x = Math.sin(seed * 12.9898) * 43758.5453;
+        return x - Math.floor(x);
+    }
+    function randomSeaPosition(index, radiusMin, radiusMax) {
+        const angle = pseudoRandom(index * 4.71 + 1.3) * Math.PI * 2;
+        const radius = radiusMin + pseudoRandom(index * 8.17 + 5.6) * (radiusMax - radiusMin);
+        return new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+    }
+    function makeBuoy(index) {
+        const buoy = new THREE.Group();
+        buoy.name = 'fixedReferenceBuoy';
+        buoy.userData.phase = pseudoRandom(index + 20) * Math.PI * 2;
+        buoy.userData.referenceVolume = Math.PI * 2.35 * 2.35 * 4.8;
+        buoy.position.copy(randomSeaPosition(index + 3, 65, 260));
+
+        const lower = new THREE.Mesh(new THREE.CylinderGeometry(2.15, 2.75, 3.2, 36), buoyRed);
+        lower.position.y = 1.6; lower.castShadow = true; lower.receiveShadow = true; buoy.add(lower);
+        const upper = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 2.1, 1.35, 36), index % 2 ? buoyYellow : buoyWhite);
+        upper.position.y = 3.85; upper.castShadow = true; upper.receiveShadow = true; buoy.add(upper);
+        const stripe = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 0.45, 36), buoyWhite);
+        stripe.position.y = 2.25; stripe.castShadow = true; buoy.add(stripe);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(2.68, 0.18, 12, 48), buoyWhite);
+        ring.rotation.x = Math.PI / 2; ring.position.y = 1.25; buoy.add(ring);
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 5.6, 12), buoyDark);
+        pole.position.y = 6.25; pole.castShadow = true; buoy.add(pole);
+        const topLight = new THREE.Mesh(new THREE.SphereGeometry(0.48, 18, 12), lightMat);
+        topLight.position.y = 9.2; buoy.add(topLight);
+        const cross = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.12, 0.12), buoyDark);
+        cross.position.y = 7.85; buoy.add(cross);
+        const anchorGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, -70, 0)]);
+        const anchorLine = new THREE.Line(anchorGeo, new THREE.LineBasicMaterial({ color: 0x1b2a34, transparent: true, opacity: 0.45 }));
+        buoy.add(anchorLine);
+        return buoy;
+    }
+
+    for (let i = 0; i < 12; i++) waterReferenceGroup.add(makeBuoy(i));
+    scene.add(waterReferenceGroup);
+}
+
+
+function updateWaterReferenceObjects() {
+    if (!waterReferenceGroup) return;
+    const t = performance.now() * 0.001;
+    waterReferenceGroup.children.forEach(function(obj) {
+        if (obj.name === 'fixedReferenceBuoy') {
+            const phase = obj.userData.phase || 0;
+            obj.position.y = Math.sin(obj.position.x * 0.028 + t * 1.2 + phase) * 1.15 + Math.cos(obj.position.z * 0.020 + t * 0.85) * 0.85 + 0.25;
+            obj.rotation.x = Math.sin(t * 0.75 + phase) * 0.08;
+            obj.rotation.z = Math.cos(t * 0.82 + phase) * 0.08;
+        }
+    });
+}
+
+
+// ==================== 水面动画 ====================
+function animateWater() {
+    if (!water || !water.geometry) return;
+    const time = performance.now() * 0.001;
+    const pos = water.geometry.attributes.position.array;
+    const diffuse = waterDiffuseLayer && waterDiffuseLayer.geometry ? waterDiffuseLayer.geometry.attributes.position.array : null;
+    for (let i = 0; i < pos.length; i += 3) {
+        const x = pos[i], y = pos[i + 1];
+        const h =
+            Math.sin(x * 0.030 + time * 1.25) * 1.35 +
+            Math.cos(y * 0.022 + time * 0.88) * 0.95 +
+            Math.sin((x + y) * 0.013 + time * 0.62) * 0.62;
+        pos[i + 2] = h;
+        if (diffuse) diffuse[i + 2] = h + 0.045;
+    }
+    water.geometry.attributes.position.needsUpdate = true;
+    if (visualFrameMod % 4 === 0) water.geometry.computeVertexNormals();
+    if (diffuse) {
+        waterDiffuseLayer.geometry.attributes.position.needsUpdate = true;
+        if (visualFrameMod % 4 === 0) waterDiffuseLayer.geometry.computeVertexNormals();
+    }
+}
+
+
+
+
+// ==================== 水下粒子 ====================
+function createUnderwaterParticles() {
+    const particleCount = 320;
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(particleCount * 3);
+    const colors = new Float32Array(particleCount * 3);
+
+    for (let i = 0; i < particleCount; i++) {
+        const i3 = i * 3;
+        positions[i3] = (Math.random() - 0.5) * 500;
+        positions[i3 + 1] = (Math.random() - 0.5) * 300 - 100;
+        positions[i3 + 2] = (Math.random() - 0.5) * 500;
+        
+        colors[i3] = 0.6 + Math.random() * 0.2;
+        colors[i3 + 1] = 0.7 + Math.random() * 0.3;
+        colors[i3 + 2] = 0.8 + Math.random() * 0.2;
+    }
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+    const material = new THREE.PointsMaterial({
+        size: 2,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.6,
+        sizeAttenuation: true
+    });
+
+    scene.add(new THREE.Points(geometry, material));
+}
+
+
+// ==================== 轻量物理碰撞 ====================
+function getModelCollisionRadius(model) {
+    if (!model) return 1;
+    model.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(model);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    return Math.max(1.0, Math.min(14.0, Math.sqrt(size.x * size.x + size.z * size.z) * 0.34));
+}
+
+function resolveBuoyCollisions(model) {
+    if (!model || !waterReferenceGroup) return false;
+    const radius = getModelCollisionRadius(model);
+    let hit = false;
+    waterReferenceGroup.children.forEach(function(buoy) {
+        if (!buoy || buoy.name !== 'fixedReferenceBuoy') return;
+        const buoyRadius = 3.0;
+        const dx = model.position.x - buoy.position.x;
+        const dz = model.position.z - buoy.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        const minDist = radius + buoyRadius;
+        if (dist > 0.0001 && dist < minDist) {
+            const nx = dx / dist;
+            const nz = dz / dist;
+            const penetration = (minDist - dist) + 0.04;
+            model.position.x += nx * penetration;
+            model.position.z += nz * penetration;
+            if (!model.userData.motionVelocity) model.userData.motionVelocity = new THREE.Vector3();
+            const vel = model.userData.motionVelocity;
+            const vn = vel.x * nx + vel.z * nz;
+            if (vn < 0) {
+                vel.x -= 1.45 * vn * nx;
+                vel.z -= 1.45 * vn * nz;
+            } else {
+                vel.x += nx * Math.min(penetration * 0.08, 0.8);
+                vel.z += nz * Math.min(penetration * 0.08, 0.8);
+            }
+            model.rotation.y += (nx * vel.z - nz * vel.x) * 0.006;
+            hit = true;
+        }
+    });
+    return hit;
+}
+
+function updateLightweightPhysics() {
+    const dt = 1 / 60;
+    for (let i = 0; i < models.length; i++) {
+        const m = models[i];
+        if (!m.userData.motionVelocity) m.userData.motionVelocity = new THREE.Vector3();
+        const vel = m.userData.motionVelocity;
+        if (vel.lengthSq() > 0.0001) {
+            m.position.addScaledVector(vel, dt);
+            vel.multiplyScalar(0.985);
+        }
+        resolveBuoyCollisions(m);
+    }
+}
+
+// ==================== 事件监听 ====================
+function setupEventListeners() {
+    // 文件上传
+    const dropArea = document.getElementById('dropArea');
+    const fileInput = document.getElementById('fileInput');
+
+    dropArea.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', handleFileSelect);
+
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(event => {
+        dropArea.addEventListener(event, e => { e.preventDefault(); e.stopPropagation(); }, false);
+        document.body.addEventListener(event, e => { e.preventDefault(); e.stopPropagation(); }, false);
+    });
+
+    ['dragenter', 'dragover'].forEach(event => {
+        dropArea.addEventListener(event, () => dropArea.style.borderColor = '#40e0d0', false);
+    });
+
+    ['dragleave', 'drop'].forEach(event => {
+        dropArea.addEventListener(event, () => dropArea.style.borderColor = 'rgba(64, 224, 208, 0.5)', false);
+    });
+
+    dropArea.addEventListener('drop', e => {
+        const files = e.dataTransfer.files;
+        if (files.length > 0) loadModel(files[0]);
+    });
+
+    // 键盘驾驶仍保留；主页面不再显示单独的方向按钮窗口。
+    document.querySelectorAll('.dir-btn').forEach(btn => {
+        btn.addEventListener('mousedown', () => sendControl(btn.dataset.dir));
+    });
+    
+    // 兼容旧版速度滑块：元素存在时才绑定，避免删除无用窗口后报错。
+    const speedSlider = document.getElementById('speedSlider');
+    if (speedSlider) {
+        speedSlider.addEventListener('input', e => {
+            currentSpeed = parseInt(e.target.value);
+            const speedValue = document.getElementById('speedValue');
+            if (speedValue) speedValue.textContent = currentSpeed + '%';
+            sendControl('speed', currentSpeed);
+        });
+    }
+
+    // 环境切换
+    document.querySelectorAll('.env-btn[data-env]').forEach(btn => {
+        btn.addEventListener('click', () => setEnvironment(btn.dataset.env));
+    });
+
+    // 键盘控制
+    document.addEventListener('keydown', handleKeyDown);
+
+    // 窗口调整
+    window.addEventListener('resize', onWindowResize);
+
+    // 鼠标点击选择
+    renderer.domElement.addEventListener('click', onCanvasClick);
+
+    // 模型拖动事件
+    renderer.domElement.addEventListener('mousedown', onMouseDown);
+    renderer.domElement.addEventListener('mousemove', onMouseMove);
+    renderer.domElement.addEventListener('mouseup', onMouseUp);
+    renderer.domElement.addEventListener('contextmenu', e => e.preventDefault()); // 禁用右键菜单
+    
+    // 模型自由旋转（右键拖动）
+    renderer.domElement.addEventListener('mousemove', onModelRotate);
+
+    // 模型缩放事件（Shift + 滚轮）
+    renderer.domElement.addEventListener('wheel', onMouseWheel, { passive: false });
+
+    // AI助手窗口已从主页面移除；仅在元素存在时兼容绑定。
+    const chatInput = document.getElementById('chatInput');
+    if (chatInput) {
+        chatInput.addEventListener('keypress', e => {
+            if (e.key === 'Enter') sendToAI();
+        });
+    }
+}
+
+// ==================== 文件处理 ====================
+function handleFileSelect(e) {
+    const files = e.target.files;
+    if (files.length > 0) loadModel(files[0]);
+}
+
+
+function getApproxModelVolume(model) {
+    if (!model) return 1;
+    model.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(model);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+    return Math.max(size.x * size.y * size.z, 0.000001);
+}
+
+function loadModel(file) {
+    const extension = file.name.split('.').pop().toLowerCase();
+    if (extension !== 'stl') {
+        showNotification('仅支持STL格式文件', true);
+        return;
+    }
+
+    showNotification('正在加载模型: ' + file.name);
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const loader = new THREE.STLLoader();
+            const geometry = loader.parse(e.target.result);
+            
+            // 计算中心并居中
+            geometry.computeBoundingBox();
+            const center = new THREE.Vector3();
+            geometry.boundingBox.getCenter(center);
+            geometry.translate(-center.x, -center.y, -center.z);
+
+            const material = new THREE.MeshPhongMaterial({
+                color: 0x2196f3,
+                specular: 0x111111,
+                shininess: 200,
+                transparent: true,
+                opacity: 0.9
+            });
+
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(Math.random() * 40 - 20, 10, Math.random() * 40 - 20);
+            mesh.rotation.y = Math.random() * Math.PI * 2;
+            
+            // 根据场景大小和固定浮标体积参照，上传模型默认最大尺寸约24m。
+            const box = new THREE.Box3().setFromObject(mesh);
+            const size = new THREE.Vector3();
+            box.getSize(size);
+            const maxDim = Math.max(size.x, size.y, size.z, 0.01);
+            const autoScale = Math.max(0.02, Math.min(80, 24 / maxDim));
+            mesh.scale.set(autoScale, autoScale, autoScale);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            mesh.userData = { fileName: file.name, originalColor: 0x2196f3, density: 250, volume: 0, autoScale: autoScale, labelScale: Math.max(0.26, Math.min(1.15, 7.5 / 24)), motionVelocity: new THREE.Vector3() };
+            mesh.userData.volume = getApproxModelVolume(mesh);
+
+            scene.add(mesh);
+            models.push(mesh);
+            selectModel(mesh);
+            updateModelList();
+            updateModelCount();
+            
+            showNotification('模型加载成功: ' + file.name);
+        } catch (error) {
+            showNotification('模型加载失败: ' + error.message, true);
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+// ==================== 模型选择 ====================
+function selectModel(model) {
+    if (selectedModel) {
+        selectedModel.material.color.set(selectedModel.userData.originalColor);
+    }
+    
+    selectedModel = model;
+    if (model) {
+        model.material.color.set(0xff9800);
+        showNotification(`已选中模型: ${model.userData.fileName}`);
+    } else {
+        showNotification('已取消选择');
+    }
+    updateModelList();
+    updateModelInfo();
+    updateTransformInputs();
+}
+
+function updateModelInfo() {
+    const panel = document.getElementById('modelInfoPanel');
+    if (!panel) return;
+    if (selectedModel) {
+        panel.style.display = 'block';
+        const infoName = document.getElementById('infoName');
+        const infoPosition = document.getElementById('infoPosition');
+        const infoScale = document.getElementById('infoScale');
+        if (infoName) infoName.textContent = selectedModel.userData.fileName;
+        if (infoPosition) {
+            const pos = selectedModel.position;
+            infoPosition.textContent = `X: ${pos.x.toFixed(1)}, Y: ${pos.y.toFixed(1)}, Z: ${pos.z.toFixed(1)}`;
+        }
+        if (infoScale) infoScale.textContent = `${(selectedModel.userData.volume || getApproxModelVolume(selectedModel)).toFixed(2)} m³`;
+    } else {
+        panel.style.display = 'none';
+    }
+}
+
+function updateModelList() {
+    const list = document.getElementById('modelList');
+    list.innerHTML = models.map((m, i) => `
+        <div class="model-item ${selectedModel === m ? 'selected' : ''}" onclick="selectModel(models[${i}])">
+            <span class="model-name">${m.userData.fileName}</span>
+            <div class="model-actions">
+                <button class="btn-view" onclick="event.stopPropagation(); scaleModel(${i}, 1.1)">+</button>
+                <button class="btn-view" onclick="event.stopPropagation(); scaleModel(${i}, 0.9)">-</button>
+                <button class="btn-del" onclick="event.stopPropagation(); deleteModel(${i})">删除</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function scaleModel(index, factor) {
+    const model = models[index];
+    if (!model) return;
+    
+    const newScale = Math.max(0.1, Math.min(10, model.scale.x * factor));
+    model.scale.set(newScale, newScale, newScale);
+    selectModel(model);
+    showNotification(`模型缩放: ${(newScale * 100).toFixed(0)}%`);
+}
+
+function deleteModel(index) {
+    const model = models[index];
+    scene.remove(model);
+    model.geometry.dispose();
+    model.material.dispose();
+    models.splice(index, 1);
+    if (selectedModel === model) selectedModel = null;
+    updateModelList();
+    updateModelCount();
+    showNotification('模型已删除');
+}
+
+function resetScene() {
+    if (cameraFollowEnabled) toggleCameraFollow(false);
+    models.forEach(m => {
+        scene.remove(m);
+        m.geometry.dispose();
+        m.material.dispose();
+    });
+    models = [];
+    selectedModel = null;
+    camera.position.set(0, 50, 100);
+    controls.reset();
+    updateModelList();
+    updateModelCount();
+    showNotification('场景已重置');
+}
+
+function updateModelCount() {
+    document.getElementById('modelCount').textContent = models.length;
+    const statModels = document.getElementById('statModels');
+    if (statModels) statModels.textContent = models.length;
+}
+
+// ==================== 键盘控制 ====================
+function handleKeyDown(e) {
+    const speed = 2;
+    const scaleStep = 0.1;
+    
+    switch(e.key.toLowerCase()) {
+        case 'w':
+            if (selectedModel) { selectedModel.position.z -= speed; selectedModel.userData.motionVelocity = new THREE.Vector3(0, 0, -speed * 1.5); resolveBuoyCollisions(selectedModel); }
+            break;
+        case 's':
+            if (selectedModel) { selectedModel.position.z += speed; selectedModel.userData.motionVelocity = new THREE.Vector3(0, 0, speed * 1.5); resolveBuoyCollisions(selectedModel); }
+            break;
+        case 'a':
+            // 修正：A 键 = 模型左转
+            if (selectedModel) selectedModel.rotation.y += THREE.MathUtils.degToRad(6);
+            break;
+        case 'd':
+            // 修正：D 键 = 模型右转
+            if (selectedModel) selectedModel.rotation.y -= THREE.MathUtils.degToRad(6);
+            break;
+        case 'q':
+            if (selectedModel) { selectedModel.position.y += speed; resolveBuoyCollisions(selectedModel); }
+            break;
+        case 'e':
+            if (selectedModel) { selectedModel.position.y -= speed; resolveBuoyCollisions(selectedModel); }
+            break;
+        case '=':
+        case '+':
+            if (selectedModel) {
+                const newScale = Math.min(selectedModel.scale.x + scaleStep, 10);
+                selectedModel.scale.set(newScale, newScale, newScale);
+                showNotification(`模型缩放: ${(newScale * 100).toFixed(0)}%`);
+            }
+            break;
+        case '-':
+            if (selectedModel) {
+                const newScale = Math.max(selectedModel.scale.x - scaleStep, 0.1);
+                selectedModel.scale.set(newScale, newScale, newScale);
+                showNotification(`模型缩放: ${(newScale * 100).toFixed(0)}%`);
+            }
+            break;
+        case 'h':
+            toggleAllUI();
+            break;
+        case 'r':
+            if (cameraFollowEnabled) toggleCameraFollow(false);
+            camera.position.set(0, 50, 100);
+            controls.reset();
+            break;
+        case ' ':
+            e.preventDefault();
+            sendControl('stop');
+            break;
+    }
+}
+
+// ==================== 模型变换控制 ====================
+
+// 验证输入值
+function validateInput(input, min, max) {
+    const value = parseFloat(input.value);
+    
+    if (isNaN(value)) {
+        input.classList.remove('valid');
+        input.classList.add('invalid');
+        return false;
+    }
+    
+    if (value < min || value > max) {
+        input.classList.remove('valid');
+        input.classList.add('invalid');
+        return false;
+    }
+    
+    input.classList.remove('invalid');
+    input.classList.add('valid');
+    return true;
+}
+
+// 应用位置变换
+function applyPosition() {
+    if (!selectedModel) {
+        showNotification('请先选择一个模型', true);
+        return;
+    }
+    
+    const posX = document.getElementById('posX');
+    const posY = document.getElementById('posY');
+    const posZ = document.getElementById('posZ');
+    
+    if (!validateInput(posX, -500, 500) || 
+        !validateInput(posY, -500, 500) || 
+        !validateInput(posZ, -500, 500)) {
+        return;
+    }
+    
+    // 平滑过渡动画
+    animatePosition(selectedModel, {
+        x: parseFloat(posX.value),
+        y: parseFloat(posY.value),
+        z: parseFloat(posZ.value)
+    });
+    
+    showTransformStatus('位置已更新');
+}
+
+// 应用旋转变换
+function applyRotation() {
+    if (!selectedModel) {
+        showNotification('请先选择一个模型', true);
+        return;
+    }
+    
+    const rotX = document.getElementById('rotX');
+    const rotY = document.getElementById('rotY');
+    const rotZ = document.getElementById('rotZ');
+    
+    if (!validateInput(rotX, 0, 360) || 
+        !validateInput(rotY, 0, 360) || 
+        !validateInput(rotZ, 0, 360)) {
+        return;
+    }
+    
+    // 平滑过渡动画
+    animateRotation(selectedModel, {
+        x: parseFloat(rotX.value),
+        y: parseFloat(rotY.value),
+        z: parseFloat(rotZ.value)
+    });
+    
+    showTransformStatus('旋转已更新');
+}
+
+// 位置平滑动画
+function animatePosition(model, targetPos, duration = 300) {
+    const startPos = {
+        x: model.position.x,
+        y: model.position.y,
+        z: model.position.z
+    };
+    const startTime = performance.now();
+    
+    function animate() {
+        const elapsed = performance.now() - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const eased = easeOutCubic(progress);
+        
+        model.position.x = startPos.x + (targetPos.x - startPos.x) * eased;
+        model.position.y = startPos.y + (targetPos.y - startPos.y) * eased;
+        model.position.z = startPos.z + (targetPos.z - startPos.z) * eased;
+        
+        if (progress < 1) {
+            requestAnimationFrame(animate);
+        }
+    }
+    
+    animate();
+}
+
+// 旋转平滑动画
+function animateRotation(model, targetRot, duration = 300) {
+    const startRot = {
+        x: THREE.MathUtils.radToDeg(model.rotation.x),
+        y: THREE.MathUtils.radToDeg(model.rotation.y),
+        z: THREE.MathUtils.radToDeg(model.rotation.z)
+    };
+    const startTime = performance.now();
+    
+    function animate() {
+        const elapsed = performance.now() - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const eased = easeOutCubic(progress);
+        
+        model.rotation.x = THREE.MathUtils.degToRad(startRot.x + (targetRot.x - startRot.x) * eased);
+        model.rotation.y = THREE.MathUtils.degToRad(startRot.y + (targetRot.y - startRot.y) * eased);
+        model.rotation.z = THREE.MathUtils.degToRad(startRot.z + (targetRot.z - startRot.z) * eased);
+        
+        if (progress < 1) {
+            requestAnimationFrame(animate);
+        }
+    }
+    
+    animate();
+}
+
+// 缓动函数
+function easeOutCubic(t) {
+    return 1 - Math.pow(1 - t, 3);
+}
+
+// 应用所有变换
+function applyAllTransform() {
+    if (!selectedModel) {
+        showNotification('请先选择一个模型', true);
+        return;
+    }
+    
+    const posX = document.getElementById('posX');
+    const posY = document.getElementById('posY');
+    const posZ = document.getElementById('posZ');
+    const rotX = document.getElementById('rotX');
+    const rotY = document.getElementById('rotY');
+    const rotZ = document.getElementById('rotZ');
+    
+    // 验证所有输入
+    if (!validateInput(posX, -500, 500) || 
+        !validateInput(posY, -500, 500) || 
+        !validateInput(posZ, -500, 500) ||
+        !validateInput(rotX, 0, 360) || 
+        !validateInput(rotY, 0, 360) || 
+        !validateInput(rotZ, 0, 360)) {
+        showNotification('请检查输入值是否在有效范围内', true);
+        return;
+    }
+    
+    // 同时应用位置和旋转
+    animatePosition(selectedModel, {
+        x: parseFloat(posX.value),
+        y: parseFloat(posY.value),
+        z: parseFloat(posZ.value)
+    }, 400);
+    
+    animateRotation(selectedModel, {
+        x: parseFloat(rotX.value),
+        y: parseFloat(rotY.value),
+        z: parseFloat(rotZ.value)
+    }, 400);
+    
+    // 应用体积输入并据此等比例改变模型大小
+    applyVolumeFromInput(document.getElementById('volumeInput').value);
+    
+    showTransformStatus('✓ 变换已应用');
+}
+
+// 重置变换
+function resetTransform() {
+    if (!selectedModel) {
+        showNotification('请先选择一个模型', true);
+        return;
+    }
+    
+    // 重置位置
+    document.getElementById('posX').value = '0';
+    document.getElementById('posY').value = '0';
+    document.getElementById('posZ').value = '0';
+    
+    // 重置旋转
+    document.getElementById('rotX').value = '0';
+    document.getElementById('rotY').value = '0';
+    document.getElementById('rotZ').value = '0';
+    
+    // 重置体积
+    selectedModel.scale.set(1, 1, 1);
+    selectedModel.userData.volume = getApproxModelVolume(selectedModel);
+    document.getElementById('volumeInput').value = selectedModel.userData.volume.toFixed(3);
+    
+    // 应用重置
+    animatePosition(selectedModel, { x: 0, y: 0, z: 0 }, 300);
+    animateRotation(selectedModel, { x: 0, y: 0, z: 0 }, 300);
+    
+    showTransformStatus('✓ 变换已重置');
+}
+
+// 显示变换状态
+function showTransformStatus(message) {
+    const status = document.getElementById('transformStatus');
+    status.textContent = message;
+    status.classList.add('show');
+    
+    setTimeout(() => {
+        status.classList.remove('show');
+    }, 2000);
+}
+
+// 更新变换输入框
+function updateTransformInputs() {
+    const posX = document.getElementById('posX');
+    if (!posX) return; // 如果元素不存在则直接返回
+    
+    if (!selectedModel) {
+        // 清空输入框
+        posX.value = '';
+        document.getElementById('posY').value = '';
+        document.getElementById('posZ').value = '';
+        document.getElementById('rotX').value = '';
+        document.getElementById('rotY').value = '';
+        document.getElementById('rotZ').value = '';
+        document.getElementById('volumeInput').value = '';
+        return;
+    }
+    
+    // 更新位置
+    posX.value = selectedModel.position.x.toFixed(1);
+    document.getElementById('posY').value = selectedModel.position.y.toFixed(1);
+    document.getElementById('posZ').value = selectedModel.position.z.toFixed(1);
+    
+    // 更新旋转（转换为角度）
+    const rotX = Math.round(THREE.MathUtils.radToDeg(selectedModel.rotation.x) % 360);
+    const rotY = Math.round(THREE.MathUtils.radToDeg(selectedModel.rotation.y) % 360);
+    const rotZ = Math.round(THREE.MathUtils.radToDeg(selectedModel.rotation.z) % 360);
+    document.getElementById('rotX').value = rotX;
+    document.getElementById('rotY').value = rotY;
+    document.getElementById('rotZ').value = rotZ;
+    
+    // 更新体积
+    selectedModel.userData.volume = selectedModel.userData.volume || getApproxModelVolume(selectedModel);
+    document.getElementById('volumeInput').value = selectedModel.userData.volume.toFixed(3);
+}
+
+// ==================== 模型体积 ====================
+function applyVolumeFromInput(value) {
+    if (!selectedModel) return;
+    let targetVolume = parseFloat(value);
+    if (isNaN(targetVolume) || targetVolume <= 0) targetVolume = selectedModel.userData.volume || getApproxModelVolume(selectedModel);
+    targetVolume = Math.max(0.000001, Math.min(1000000000, targetVolume));
+    const currentVolume = Math.max(getApproxModelVolume(selectedModel), 0.000001);
+    const scaleFactor = Math.cbrt(targetVolume / currentVolume);
+    selectedModel.scale.multiplyScalar(scaleFactor);
+    selectedModel.userData.volume = targetVolume;
+    document.getElementById('volumeInput').value = targetVolume.toFixed(3);
+    updateModelInfo();
+    showTransformStatus('模型体积已设置为 ' + targetVolume.toFixed(3) + ' m³');
+}
+
+function applyScaleFromSlider(value) { applyVolumeFromInput(document.getElementById('volumeInput').value); }
+function applyScaleFromInput(value) { applyVolumeFromInput(document.getElementById('volumeInput').value); }
+
+// ==================== 模型自由旋转功能 ====================
+function onModelRotate(e) {
+    if (!selectedModel) return;
+    
+    // 右键拖动旋转模型
+    if (e.buttons === 2) {
+        const deltaX = e.movementX || 0;
+        const deltaY = e.movementY || 0;
+        
+        // 根据鼠标移动量旋转模型
+        const rotationSpeed = 0.01;
+        selectedModel.rotation.y += deltaX * rotationSpeed;
+        selectedModel.rotation.x += deltaY * rotationSpeed;
+        
+        // 限制X轴旋转角度
+        selectedModel.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, selectedModel.rotation.x));
+        
+        // 更新输入框
+        updateTransformInputs();
+    }
+}
+
+// ==================== 鼠标交互 ====================
+function onCanvasClick(e) {
+    var ndc = getNDCFromEvent(e);
+    mouse.x = ndc.x;
+    mouse.y = ndc.y;
+
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(models);
+
+    if (intersects.length > 0) {
+        selectModel(intersects[0].object);
+    } else {
+        selectModel(null);
+    }
+}
+
+// ==================== 模型拖动 ====================
+function onMouseDown(e) {
+    if (e.button !== 0) return; // 只处理左键
+    
+    var ndc = getNDCFromEvent(e);
+    mouse.x = ndc.x;
+    mouse.y = ndc.y;
+
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(models);
+
+    if (intersects.length > 0) {
+        isDragging = true;
+        controls.enabled = false; // 禁用轨道控制器
+        
+        const intersected = intersects[0].object;
+        if (selectedModel !== intersected) {
+            selectModel(intersected);
+        }
+
+        // 设置拖动平面
+        dragPlane.setFromNormalAndCoplanarPoint(
+            camera.getWorldDirection(new THREE.Vector3()).negate(),
+            selectedModel.position
+        );
+
+        // 计算偏移量
+        raycaster.ray.intersectPlane(dragPlane, intersection);
+        dragOffset.copy(selectedModel.position).sub(intersection);
+        
+        renderer.domElement.style.cursor = 'grabbing';
+    }
+}
+
+function onMouseMove(e) {
+    if (!isDragging || !selectedModel) return;
+
+    var ndc = getNDCFromEvent(e);
+    mouse.x = ndc.x;
+    mouse.y = ndc.y;
+
+    raycaster.setFromCamera(mouse, camera);
+    
+    if (raycaster.ray.intersectPlane(dragPlane, intersection)) {
+        selectedModel.position.copy(intersection.add(dragOffset));
+        if (!selectedModel.userData.motionVelocity) selectedModel.userData.motionVelocity = new THREE.Vector3();
+        selectedModel.userData.motionVelocity.multiplyScalar(0.35);
+        resolveBuoyCollisions(selectedModel);
+    }
+}
+
+function onMouseUp(e) {
+    if (e.button !== 0) return;
+    
+    if (isDragging) {
+        isDragging = false;
+        controls.enabled = true; // 重新启用轨道控制器
+        renderer.domElement.style.cursor = 'grab';
+    }
+}
+
+// ==================== 模型体积提示 ====================
+function onMouseWheel(e) {
+    if (e.shiftKey && selectedModel) {
+        e.preventDefault();
+        showNotification('请在“模型体积控制”中输入具体体积数值来改变模型大小');
+    }
+}
+
+function onWindowResize() {
+    const container = document.getElementById('canvas-container');
+    if (!container) return;
+    
+    camera.aspect = container.clientWidth / container.clientHeight;
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    camera.updateProjectionMatrix();
+}
+
+function getCameraFollowCandidate() {
+    if (cameraFollowTarget && models.indexOf(cameraFollowTarget) >= 0) return cameraFollowTarget;
+    if (selectedModel && models.indexOf(selectedModel) >= 0) return selectedModel;
+    return null;
+}
+
+function toggleCameraFollow(forceState) {
+    const nextState = typeof forceState === 'boolean' ? forceState : !cameraFollowEnabled;
+    if (nextState) {
+        const target = getCameraFollowCandidate();
+        if (!target) { showNotification('请先选择一个需要跟随的模型', true); return; }
+        cameraFollowTarget = target;
+        cameraFollowEnabled = true;
+        showNotification('已开启视角跟踪：摄像头将跟随 ' + (target.userData.fileName || '模型'));
+    } else {
+        cameraFollowEnabled = false;
+        cameraFollowTarget = null;
+        showNotification('已关闭视角跟踪');
+    }
+    const btn = document.getElementById('followCameraBtn');
+    if (btn) btn.classList.toggle('active', cameraFollowEnabled);
+}
+
+function updateCameraFollow() {
+    if (!cameraFollowEnabled) return;
+    const target = getCameraFollowCandidate();
+    if (!target) { toggleCameraFollow(false); return; }
+    cameraFollowTarget = target;
+    target.updateMatrixWorld(true);
+    const targetPos = target.getWorldPosition(new THREE.Vector3());
+    let forward = new THREE.Vector3(0, 0, 1).applyQuaternion(target.quaternion);
+    forward.y = 0;
+    if (forward.lengthSq() < 0.0001) forward.set(0, 0, 1);
+    forward.normalize();
+    const underwater = currentEnv === 'underwater';
+    const desiredCamera = targetPos.clone().addScaledVector(forward, underwater ? -58 : -92).add(new THREE.Vector3(0, underwater ? -12 : 34, 0));
+    const desiredTarget = targetPos.clone().addScaledVector(forward, 22);
+    desiredTarget.y += underwater ? -4 : 6;
+    camera.position.lerp(desiredCamera, 0.09);
+    controls.target.lerp(desiredTarget, 0.16);
+}
+
+// ==================== 环境设置 ====================
+function setEnvironment(env) {
+    currentEnv = env;
+    document.querySelectorAll('.env-btn[data-env]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.env === env);
+    });
+
+    switch(env) {
+        case 'day':
+            scene.background = new THREE.Color(0x87CEEB);
+            scene.fog = new THREE.FogExp2(0x80c5ff, 0.002);
+            if (water && water.material) { water.material.color.setHex(0x004766); water.material.opacity = 0.86; if (water.material.specular) water.material.specular.setHex(0x061820); water.material.shininess = 14; }
+            if (waterDiffuseLayer && waterDiffuseLayer.material) { waterDiffuseLayer.visible = true; waterDiffuseLayer.material.opacity = 0.38; waterDiffuseLayer.material.color.setHex(0x006b8f); }
+            break;
+        case 'sunset':
+            scene.background = new THREE.Color(0x8a5b35);
+            scene.fog = new THREE.FogExp2(0x6f4a3a, 0.003);
+            if (water && water.material) { water.material.color.setHex(0x17384f); water.material.opacity = 0.82; if (water.material.specular) water.material.specular.setHex(0x061820); water.material.shininess = 12; }
+            if (waterDiffuseLayer && waterDiffuseLayer.material) { waterDiffuseLayer.visible = true; waterDiffuseLayer.material.opacity = 0.30; waterDiffuseLayer.material.color.setHex(0x00506f); }
+            break;
+        case 'night':
+            scene.background = new THREE.Color(0x000033);
+            scene.fog = new THREE.FogExp2(0x000066, 0.005);
+            if (water && water.material) { water.material.color.setHex(0x061126); water.material.opacity = 0.78; if (water.material.specular) water.material.specular.setHex(0x02070d); water.material.shininess = 8; }
+            if (waterDiffuseLayer && waterDiffuseLayer.material) { waterDiffuseLayer.visible = true; waterDiffuseLayer.material.opacity = 0.18; waterDiffuseLayer.material.color.setHex(0x002944); }
+            break;
+        case 'underwater':
+            scene.background = new THREE.Color(0x004466);
+            scene.fog = new THREE.FogExp2(0x006699, 0.01);
+            if (water && water.material) { water.material.color.setHex(0x062b4d); water.material.opacity = 0.32; if (water.material.specular) water.material.specular.setHex(0x02070d); water.material.shininess = 8; }
+            if (waterDiffuseLayer) waterDiffuseLayer.visible = false;
+            break;
+    }
+    const followBtn = document.getElementById('followCameraBtn');
+    if (followBtn) followBtn.classList.toggle('active', cameraFollowEnabled);
+}
+
+// ==================== UI控制 ====================
+function toggleAllUI() {
+    isUIHidden = !isUIHidden;
+    const elements = ['leftPanel', 'rightPanel', 'bottomPanel', 'aiPanel', 'instructions', 'perfPanel'];
+    elements.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('hidden', isUIHidden);
+    });
+    showNotification(isUIHidden ? '界面已隐藏 - 按H键显示' : '界面已显示');
+}
+
+// ==================== 通信控制 ====================
+function sendControl(direction, speed) {
+    if (socket && socket.connected) {
+        socket.emit('control', {
+            direction: direction,
+            speed: speed || currentSpeed,
+            timestamp: Date.now()
+        });
+    }
+}
+
+// ==================== AI聊天 ====================
+function sendToAI() {
+    const input = document.getElementById('chatInput');
+    if (!input) return;
+    const message = input.value.trim();
+    if (!message) return;
+
+    addChatMessage('user', message);
+    input.value = '';
+
+    // 模拟AI响应
+    setTimeout(() => {
+        const responses = [
+            '收到您的指令，已分析当前船舶状态。',
+            '根据传感器数据，一切运行正常。',
+            '已记录您的操作，系统响应良好。',
+            '当前航速适中，航线稳定。',
+            '气象数据显示海况良好，适合航行。'
+        ];
+        addChatMessage('ai', responses[Math.floor(Math.random() * responses.length)]);
+    }, 1000);
+}
+
+function addChatMessage(role, content) {
+    const container = document.getElementById('chatMessages');
+    if (!container) return;
+    const div = document.createElement('div');
+    div.className = `chat-message ${role}`;
+    div.textContent = content;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+}
+
+// ==================== 通知提示 ====================
+function showNotification(message, isError = false) {
+    const notification = document.getElementById('notification');
+    notification.textContent = message;
+    notification.className = 'notification show' + (isError ? ' error' : '');
+    setTimeout(() => notification.classList.remove('show'), 3000);
+}
+
+// ==================== 时间更新 ====================
+function updateTime() {
+    const now = new Date();
+    document.getElementById('currentTime').textContent = 
+        now.toLocaleDateString('zh-CN') + ' ' + now.toLocaleTimeString('zh-CN');
+}
+
+// ==================== 性能监控 ====================
+function updatePerformance() {
+    frameCount++;
+    const currentTime = performance.now();
+    
+    if (currentTime - lastTime >= 1000) {
+        document.getElementById('fpsDisplay').textContent = frameCount;
+        document.getElementById('fpsValue').textContent = frameCount + ' FPS';
+        const statFPS = document.getElementById('statFPS');
+        if (statFPS) statFPS.textContent = frameCount;
+        
+        if (renderer.info) {
+            document.getElementById('triCount').textContent = renderer.info.render.triangles;
+            document.getElementById('drawCalls').textContent = renderer.info.render.calls;
+        }
+        
+        frameCount = 0;
+        lastTime = currentTime;
+    }
+}
+
+// ==================== WebSocket连接 ====================
+function connectWebSocket() {
+    try {
+        socket = io('http://localhost:5000');
+        
+        socket.on('connect', () => {
+            document.getElementById('connectionDot').className = 'status-dot connected';
+            document.getElementById('connectionStatus').textContent = '已连接';
+        });
+
+        socket.on('disconnect', () => {
+            document.getElementById('connectionDot').className = 'status-dot disconnected';
+            document.getElementById('connectionStatus').textContent = '未连接';
+        });
+
+        socket.on('sensor_update', data => {
+            document.getElementById('gpsData').textContent = 
+                data.gps.lat.toFixed(4) + ', ' + data.gps.lon.toFixed(4);
+            document.getElementById('speedData').textContent = data.speed + ' m/s';
+            document.getElementById('batteryData').textContent = data.battery + '%';
+            document.getElementById('tempData').textContent = data.temperature + '°C';
+            document.getElementById('humidityData').textContent = data.humidity + '%';
+            document.getElementById('depthData').textContent = data.depth + ' m';
+        });
+    } catch (e) {
+        console.log('WebSocket连接失败，传感器数据将显示默认值');
+    }
+}
+
+// ==================== 动画循环 ====================
+function animate() {
+    requestAnimationFrame(animate);
+    
+    visualFrameMod = (visualFrameMod + 1) % 12;
+    if (visualFrameMod % 2 === 0) animateWater();
+    updateLightweightPhysics();
+    updateWaterReferenceObjects();
+    updateCameraFollow();
+    controls.update();
+    renderer.render(scene, camera);
+    
+    updatePerformance();
+    
+    // 实时更新模型信息
+    if (selectedModel && isDragging) {
+        updateTransformInputs();
+        const pos = selectedModel.position;
+        const infoPos = document.getElementById('infoPosition');
+        const infoScl = document.getElementById('infoScale');
+        if (infoPos) infoPos.textContent = 'X: ' + pos.x.toFixed(1) + ', Y: ' + pos.y.toFixed(1) + ', Z: ' + pos.z.toFixed(1);
+        if (infoScl) infoScl.textContent = (selectedModel.scale.x * 100).toFixed(0) + '%';
+    }
+}
+
+// ==================== 启动 ====================
+window.addEventListener('DOMContentLoaded', () => {
+    init();
+    connectWebSocket();
+});
+</script>
+</body>
+</html>

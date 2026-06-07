@@ -1,0 +1,16 @@
+# DWA局部规划器参数
+max_linear_vel: 2.0          # 最大线速度 m/s
+min_linear_vel: -0.5         # 最小线速度 m/s
+max_angular_vel: 0.8         # 最大角速度 rad/s
+max_linear_accel: 0.5        # 最大线加速度 m/s^2
+max_angular_accel: 0.4       # 最大角加速度 rad/s^2
+
+predict_time: 2.0            # 前向仿真时间 s
+dt: 0.1                      # 仿真步长 s
+linear_samples: 10           # 线速度采样数
+angular_samples: 20          # 角速度采样数
+
+goal_weight: 1.0             # 目标方向权重
+obstacle_weight: 2.0         # 障碍物距离权重
+speed_weight: 0.3            # 速度权重
+safety_dist: 2.0             # 安全距离 m

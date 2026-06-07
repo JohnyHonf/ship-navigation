@@ -1,0 +1,14 @@
+# 代价地图通用参数
+obstacle_range: 15.0
+raytrace_range: 20.0
+footprint: [[-4.0, -1.0], [-4.0, 1.0], [4.0, 1.0], [4.0, -1.0]]
+inflation_radius: 2.0
+cost_scaling_factor: 10.0
+observation_sources: laser_scan
+laser_scan:
+  sensor_frame: laser_link
+  data_type: LaserScan
+  topic: scan
+  marking: true
+  clearing: true
+  expected_update_rate: 0.2
