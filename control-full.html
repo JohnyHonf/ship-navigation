@@ -3120,11 +3120,13 @@ function initGestureCamera() {
 }
 
 function onHandResults(results) {
-    // 仅在手势激活且控制模式为手势时处理；手势目标始终跟随当前选中模型。
+    // 手势驾驶目标同步到当前选中模型
     if (selectedModel && selectedModel !== driveModel) setDriveModelFromModel(selectedModel, true);
     if (!gestureActive || controlMode !== 'gesture' || !manualDriveActive || !driveModelBody) return;
-    
+
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        // YOYO 手势映射
+
         let lm = results.multiHandLandmarks[0];
         // 手腕位置 (0) - 作为参考中心
         let wrist = lm[0];
