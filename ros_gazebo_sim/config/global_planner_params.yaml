@@ -1,5 +1,0 @@
-# 全局路径规划器参数
-algorithm: "astar"           # dijkstra 或 astar
-heuristic_weight: 1.2        # A*启发式权重
-obstacle_threshold: 50       # 障碍物判断阈值 (0-100)
-inflation_radius: 2          # 障碍物膨胀半径(格)
